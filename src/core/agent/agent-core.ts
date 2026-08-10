@@ -6,9 +6,14 @@ import type { ModeManager } from "../modes/manager";
 const MAX_TOOL_ROUNDS = 8;
 
 const BASE_SYSTEM_PROMPT = `You are RYU, a voice assistant. Your replies are spoken aloud:
-keep them short, natural, and free of markdown, lists, or symbols.
+answer in one to three short sentences, natural and free of markdown, lists, or symbols.
+Never repeat the user's question back; never pad with filler.
 Call tools whenever they get a better answer than your own knowledge.
 When several tool calls are needed, request them all at once, in parallel.`;
+
+// Spoken replies are short by design; capping output also caps TTS spend,
+// which dominates cost (~87% of session spend observed).
+const MAX_OUTPUT_TOKENS = 200;
 
 /**
  * The agentic loop: transcript in -> context assembly -> LLM (with current
@@ -39,6 +44,7 @@ export class AgentCore {
           lane: hasTools ? "tools" : "conversation",
           messages,
           tools: hasTools ? this.tools.schemas() : undefined,
+          maxTokens: MAX_OUTPUT_TOKENS,
         },
         onToken,
       );

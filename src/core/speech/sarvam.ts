@@ -1,3 +1,6 @@
+import { createHash } from "node:crypto";
+import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
 import { SarvamAIClient } from "sarvamai";
 
 type SpeechToTextStreamingSocket = Awaited<
@@ -34,7 +37,8 @@ export class SarvamSTT implements STTProvider {
       "language-code": "unknown", // auto-detect; handles code-mixed speech
       model: "saaras:v4",
       sample_rate: String(STT_SAMPLE_RATE),
-      high_vad_sensitivity: "true",
+      // Deliberately NOT high_vad_sensitivity: it splits natural pauses into
+      // fragment finals. Segment aggregation lives in the orchestrator.
     });
     socket.on("message", (message) => {
       const data = message.data as { transcript?: unknown };
@@ -68,19 +72,41 @@ export class SarvamSTT implements STTProvider {
   }
 }
 
-/** Sarvam TTS via REST (bulbul:v3). Returns base64-decoded WAV per sentence. */
+/**
+ * Sarvam TTS via REST (bulbul:v3). Returns base64-decoded WAV per sentence.
+ *
+ * TTS dominates cost (~87% of session spend, ~₹3/1k chars observed), so
+ * every synthesis is cached on disk keyed by (model, speaker, text) —
+ * recurring sentences ("What would you like to know?") are paid for once.
+ */
 export class SarvamTTS implements TTSProvider {
   readonly name = "sarvam-tts";
   private client: SarvamAIClient;
+  private cacheDir = join(process.cwd(), ".tts-cache");
 
   constructor(
     apiKey: string,
     private speaker: string = process.env.RYU_TTS_SPEAKER ?? "shubh",
   ) {
     this.client = new SarvamAIClient({ apiSubscriptionKey: apiKey });
+    mkdirSync(this.cacheDir, { recursive: true });
   }
 
   async synthesize(text: string): Promise<{ audio: Buffer; mimeType: string }> {
+    const normalized = text.trim().replace(/\s+/g, " ");
+    const key = createHash("sha256")
+      .update(`bulbul:v3|${this.speaker}|${normalized.toLowerCase()}`)
+      .digest("hex");
+    const cachePath = join(this.cacheDir, `${key}.wav`);
+    if (existsSync(cachePath)) {
+      return { audio: readFileSync(cachePath), mimeType: "audio/wav" };
+    }
+    const result = await this.convert(normalized);
+    writeFileSync(cachePath, result.audio);
+    return result;
+  }
+
+  private async convert(text: string): Promise<{ audio: Buffer; mimeType: string }> {
     const response = await this.client.textToSpeech.convert({
       // bulbul:v3 caps input at 2500 chars; sentences are far below that.
       text: text.slice(0, 2500),

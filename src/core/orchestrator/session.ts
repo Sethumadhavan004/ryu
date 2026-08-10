@@ -14,6 +14,16 @@ export class SessionOrchestrator {
   private generation = 0;
   /** Serializes agent turns: a second final transcript waits its turn. */
   private turnQueue: Promise<void> = Promise.resolve();
+  /**
+   * STT finalizes on every micro-pause, which shreds natural halting speech
+   * (especially non-native speakers) into fragments. We aggregate finalized
+   * segments for the whole push-to-talk hold and fire ONE agent turn only
+   * after release, once no new segment has arrived for SETTLE_MS.
+   */
+  private pendingSegments: string[] = [];
+  private flushRequested = false;
+  private settleTimer: NodeJS.Timeout | null = null;
+  private static readonly SETTLE_MS = 800;
 
   constructor(
     private stt: STTProvider,
@@ -32,19 +42,27 @@ export class SessionOrchestrator {
     this.stt.pushAudio(audio);
   }
 
-  /** Push-to-talk released: force-finalize buffered audio. */
+  /** Push-to-talk released: force-finalize buffered audio, then respond. */
   flush(): void {
+    this.flushRequested = true;
     this.stt.flush();
+    // Trailing finals can still arrive after the flush signal; wait for the
+    // stream to settle before committing the turn.
+    this.armSettleTimer();
   }
 
   /** User started talking over the agent: kill playback + generation. */
   bargeIn(): void {
     this.generation += 1;
+    this.clearSettleTimer();
+    this.pendingSegments = [];
+    this.flushRequested = false;
     this.modes.cancelPendingActivation();
     this.setState("listening");
   }
 
   async stop(): Promise<void> {
+    this.clearSettleTimer();
     await this.stt.stop();
     this.setState("idle");
   }
@@ -54,9 +72,31 @@ export class SessionOrchestrator {
     if (!chunk.isFinal || chunk.text.trim() === "") return;
 
     const utterance = { text: chunk.text, speakerId: chunk.speakerId, timestamp: Date.now() };
+    // Modes (e.g. meeting logging) still see every raw segment.
     await this.modes.handleUtterance(utterance);
 
-    this.turnQueue = this.turnQueue.then(() => this.runTurn(utterance.text)).catch(() => {});
+    this.pendingSegments.push(chunk.text.trim());
+    // Still holding the button: keep accumulating. Released: reset the
+    // settle window so a trailing segment extends the wait.
+    if (this.flushRequested) this.armSettleTimer();
+  }
+
+  private commitTurn(): void {
+    this.flushRequested = false;
+    const text = this.pendingSegments.join(" ").trim();
+    this.pendingSegments = [];
+    if (!text) return;
+    this.turnQueue = this.turnQueue.then(() => this.runTurn(text)).catch(() => {});
+  }
+
+  private armSettleTimer(): void {
+    this.clearSettleTimer();
+    this.settleTimer = setTimeout(() => this.commitTurn(), SessionOrchestrator.SETTLE_MS);
+  }
+
+  private clearSettleTimer(): void {
+    if (this.settleTimer) clearTimeout(this.settleTimer);
+    this.settleTimer = null;
   }
 
   private async runTurn(text: string): Promise<void> {
