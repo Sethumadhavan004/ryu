@@ -29,6 +29,7 @@ export type ServerEvent =
 /** Events flowing client -> server over the session WebSocket. */
 export type ClientEvent =
   | { type: "audio-chunk"; audioBase64: string }
+  | { type: "flush" }
   | { type: "barge-in" }
   | { type: "cancel-mode-activation" }
   | { type: "end-session" };

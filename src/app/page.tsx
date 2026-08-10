@@ -1,69 +1,240 @@
-import Image from "next/image";
+"use client";
+
+import { useCallback, useEffect, useRef, useState } from "react";
+
+type SessionState = "disconnected" | "idle" | "listening" | "thinking" | "speaking";
+
+interface LogEntry {
+  who: "you" | "ryu" | "system";
+  text: string;
+}
 
 export default function Home() {
+  const [state, setState] = useState<SessionState>("disconnected");
+  const [holding, setHolding] = useState(false);
+  const [mode, setMode] = useState<string | null>(null);
+  const [countdown, setCountdown] = useState<{ mode: string; secondsLeft: number } | null>(null);
+  const [log, setLog] = useState<LogEntry[]>([]);
+
+  const wsRef = useRef<WebSocket | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const processorRef = useRef<ScriptProcessorNode | null>(null);
+  const holdingRef = useRef(false);
+  const playQueueRef = useRef<string[]>([]);
+  const playingRef = useRef<HTMLAudioElement | null>(null);
+  const agentLineRef = useRef(false);
+  const logEndRef = useRef<HTMLDivElement | null>(null);
+
+  const appendLog = useCallback((who: LogEntry["who"], text: string) => {
+    setLog((prev) => {
+      // Merge consecutive RYU tokens into one line.
+      if (who === "ryu" && agentLineRef.current && prev.length > 0 && prev[prev.length - 1].who === "ryu") {
+        const merged = [...prev];
+        merged[merged.length - 1] = { who, text: merged[merged.length - 1].text + text };
+        return merged;
+      }
+      agentLineRef.current = who === "ryu";
+      return [...prev, { who, text }];
+    });
+  }, []);
+
+  const stopPlayback = useCallback(() => {
+    playQueueRef.current = [];
+    playingRef.current?.pause();
+    playingRef.current = null;
+  }, []);
+
+  const playNext = useCallback(() => {
+    const next = playQueueRef.current.shift();
+    if (!next) {
+      playingRef.current = null;
+      return;
+    }
+    const audio = new Audio(next);
+    playingRef.current = audio;
+    audio.onended = playNext;
+    audio.onerror = playNext;
+    void audio.play();
+  }, []);
+
+  const connect = useCallback(async () => {
+    // Mic first, so a permission denial never leaves a half-open session.
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+    });
+    streamRef.current = stream;
+
+    const ctx = new AudioContext({ sampleRate: 16000 });
+    audioCtxRef.current = ctx;
+    const source = ctx.createMediaStreamSource(stream);
+    const processor = ctx.createScriptProcessor(4096, 1, 1);
+    processorRef.current = processor;
+
+    const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
+    wsRef.current = ws;
+
+    processor.onaudioprocess = (event) => {
+      if (!holdingRef.current || ws.readyState !== WebSocket.OPEN) return;
+      const input = event.inputBuffer.getChannelData(0);
+      const pcm = new Int16Array(input.length);
+      for (let i = 0; i < input.length; i++) {
+        const sample = Math.max(-1, Math.min(1, input[i]));
+        pcm[i] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+      }
+      const bytes = new Uint8Array(pcm.buffer);
+      let binary = "";
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+      ws.send(JSON.stringify({ type: "audio-chunk", audioBase64: btoa(binary) }));
+    };
+    source.connect(processor);
+    processor.connect(ctx.destination);
+
+    ws.onmessage = (message) => {
+      const event = JSON.parse(message.data as string) as
+        | { type: "state"; state: Exclude<SessionState, "disconnected"> }
+        | { type: "transcript"; chunk: { text: string; isFinal: boolean } }
+        | { type: "agent-text"; text: string }
+        | { type: "agent-audio"; audioBase64: string; mimeType: string }
+        | { type: "mode-countdown"; mode: string; secondsLeft: number }
+        | { type: "mode-changed"; mode: string | null }
+        | { type: "error"; message: string };
+      switch (event.type) {
+        case "state":
+          setState(event.state);
+          break;
+        case "transcript":
+          if (event.chunk.isFinal) appendLog("you", event.chunk.text);
+          break;
+        case "agent-text":
+          appendLog("ryu", event.text);
+          break;
+        case "agent-audio": {
+          playQueueRef.current.push(`data:${event.mimeType};base64,${event.audioBase64}`);
+          if (!playingRef.current) playNext();
+          break;
+        }
+        case "mode-countdown":
+          setCountdown({ mode: event.mode, secondsLeft: event.secondsLeft });
+          break;
+        case "mode-changed":
+          setCountdown(null);
+          setMode(event.mode);
+          break;
+        case "error":
+          appendLog("system", event.message);
+          break;
+      }
+    };
+    ws.onclose = () => setState("disconnected");
+  }, [appendLog, playNext]);
+
+  const disconnect = useCallback(() => {
+    wsRef.current?.send(JSON.stringify({ type: "end-session" }));
+    wsRef.current?.close();
+    processorRef.current?.disconnect();
+    void audioCtxRef.current?.close();
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    stopPlayback();
+    setState("disconnected");
+  }, [stopPlayback]);
+
+  useEffect(() => () => disconnect(), [disconnect]);
+  useEffect(() => logEndRef.current?.scrollIntoView({ behavior: "smooth" }), [log]);
+
+  const startHold = () => {
+    if (state === "disconnected") return;
+    // Talking over RYU = barge-in.
+    if (playingRef.current || state === "speaking" || state === "thinking") {
+      stopPlayback();
+      wsRef.current?.send(JSON.stringify({ type: "barge-in" }));
+    }
+    holdingRef.current = true;
+    setHolding(true);
+  };
+
+  const endHold = () => {
+    holdingRef.current = false;
+    setHolding(false);
+    wsRef.current?.send(JSON.stringify({ type: "flush" }));
+  };
+
+  const stateLabel: Record<SessionState, string> = {
+    disconnected: "Disconnected",
+    idle: "Idle",
+    listening: "Listening",
+    thinking: "Thinking…",
+    speaking: "Speaking",
+  };
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
+    <main className="flex min-h-screen flex-col items-center bg-zinc-950 p-6 text-zinc-100">
+      <div className="flex w-full max-w-2xl flex-1 flex-col gap-4">
+        <header className="flex items-center justify-between">
+          <h1 className="text-2xl font-bold tracking-tight">RYU</h1>
+          <div className="flex items-center gap-3 text-sm">
+            {mode && <span className="rounded bg-emerald-900 px-2 py-1">{mode} mode</span>}
+            <span className="rounded bg-zinc-800 px-2 py-1">{stateLabel[state]}</span>
+          </div>
+        </header>
+
+        {countdown && (
+          <div className="flex items-center justify-between rounded-lg border border-amber-600 bg-amber-950 px-4 py-3">
+            <span>
+              Activating <b>{countdown.mode}</b> mode in {countdown.secondsLeft}s…
+            </span>
+            <button
+              className="rounded bg-amber-700 px-3 py-1 hover:bg-amber-600"
+              onClick={() => wsRef.current?.send(JSON.stringify({ type: "cancel-mode-activation" }))}
             >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
+              Cancel
+            </button>
+          </div>
+        )}
+
+        <div className="flex-1 space-y-2 overflow-y-auto rounded-lg border border-zinc-800 bg-zinc-900 p-4">
+          {log.length === 0 && (
+            <p className="text-zinc-500">Connect, then hold the button and speak.</p>
+          )}
+          {log.map((entry, i) => (
+            <p
+              key={i}
+              className={entry.who === "you" ? "text-sky-300" : entry.who === "ryu" ? "text-zinc-100" : "text-red-400"}
             >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+              <span className="mr-2 text-xs uppercase text-zinc-500">{entry.who}</span>
+              {entry.text}
+            </p>
+          ))}
+          <div ref={logEndRef} />
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+
+        <div className="flex items-center justify-center gap-4 pb-2">
+          {state === "disconnected" ? (
+            <button
+              className="rounded-full bg-sky-600 px-8 py-4 text-lg font-semibold hover:bg-sky-500"
+              onClick={() => void connect().catch((e: unknown) => appendLog("system", String(e)))}
+            >
+              Connect
+            </button>
+          ) : (
+            <>
+              <button
+                className={`select-none rounded-full px-10 py-5 text-lg font-semibold transition-colors ${
+                  holding ? "bg-red-600" : "bg-emerald-600 hover:bg-emerald-500"
+                }`}
+                onPointerDown={startHold}
+                onPointerUp={endHold}
+                onPointerLeave={() => holding && endHold()}
+              >
+                {holding ? "Release to send" : "Hold to talk"}
+              </button>
+              <button className="rounded-full bg-zinc-700 px-5 py-3 hover:bg-zinc-600" onClick={disconnect}>
+                End
+              </button>
+            </>
+          )}
         </div>
-      </main>
-    </div>
+      </div>
+    </main>
   );
 }

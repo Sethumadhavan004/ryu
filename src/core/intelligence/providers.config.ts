@@ -14,6 +14,20 @@ import type { ProviderModelConfig } from "./types";
  */
 export const PROVIDER_REGISTRY: ProviderModelConfig[] = [
   {
+    // Interim intelligence until the free-tier pool is set up: shares the
+    // Sarvam speech credits. Model id verified from official sarvamai SDK
+    // v1.1.8 (SarvamModelIds); rpm from docs (60/min general endpoints).
+    provider: "sarvam",
+    model: "sarvam-105b",
+    lanes: ["conversation", "tools", "batch"],
+    priority: 50,
+    limits: { rpm: 60 },
+    sourceUrl: "https://docs.sarvam.ai/api-reference-docs/ratelimits",
+    verifiedAt: "2026-08-11",
+    apiKeyEnvVars: ["SARVAM_API_KEY_1", "SARVAM_API_KEY_2"],
+    enabled: true,
+  },
+  {
     provider: "groq",
     model: "UNVERIFIED-llama-3.3-70b-versatile",
     lanes: ["conversation"],

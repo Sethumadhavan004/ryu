@@ -9,6 +9,8 @@ export interface STTProvider {
   start(onChunk: (chunk: TranscriptChunk) => void): Promise<void>;
   /** Feed raw audio from the client (PCM/opus per implementation contract). */
   pushAudio(audio: Buffer): void;
+  /** Force-finalize buffered audio (e.g. push-to-talk released). */
+  flush(): void;
   stop(): Promise<void>;
 }
 
