@@ -20,7 +20,19 @@ async function main() {
   // Imported after app.prepare() so session code sees the loaded env vars.
   const { createSession } = await import("./src/core/session-factory");
 
-  const wss = new WebSocketServer({ server, path: "/ws" });
+  // noServer + manual upgrade routing: attaching a path-bound WebSocketServer
+  // directly to the http server rejects every other upgrade request with 400,
+  // which kills Next's HMR websocket (/_next/hmr) in dev.
+  const wss = new WebSocketServer({ noServer: true });
+  const nextUpgrade = app.getUpgradeHandler();
+  server.on("upgrade", (request, socket, head) => {
+    const { pathname } = new URL(request.url ?? "/", "http://localhost");
+    if (pathname === "/ws") {
+      wss.handleUpgrade(request, socket, head, (ws) => wss.emit("connection", ws, request));
+    } else {
+      void nextUpgrade(request, socket, head);
+    }
+  });
   wss.on("connection", async (socket: WebSocket) => {
     const send = (event: unknown) => {
       if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(event));

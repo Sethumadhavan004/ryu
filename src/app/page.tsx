@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-type SessionState = "disconnected" | "idle" | "listening" | "thinking" | "speaking";
+type SessionState = "disconnected" | "connecting" | "idle" | "listening" | "thinking" | "speaking";
 
 interface LogEntry {
   who: "you" | "ryu" | "system";
@@ -58,8 +58,7 @@ export default function Home() {
     void audio.play();
   }, []);
 
-  const connect = useCallback(async () => {
-    // Mic first, so a permission denial never leaves a half-open session.
+  const setupMic = useCallback(async (ws: WebSocket) => {
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
     });
@@ -70,9 +69,6 @@ export default function Home() {
     const source = ctx.createMediaStreamSource(stream);
     const processor = ctx.createScriptProcessor(4096, 1, 1);
     processorRef.current = processor;
-
-    const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
-    wsRef.current = ws;
 
     processor.onaudioprocess = (event) => {
       if (!holdingRef.current || ws.readyState !== WebSocket.OPEN) return;
@@ -89,6 +85,21 @@ export default function Home() {
     };
     source.connect(processor);
     processor.connect(ctx.destination);
+  }, []);
+
+  const connect = useCallback(() => {
+    // WebSocket first so the session (and UI feedback) starts immediately;
+    // mic permission is requested after and reported if it fails.
+    setState("connecting");
+    const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
+    wsRef.current = ws;
+
+    ws.onopen = () => {
+      setupMic(ws).catch((error: unknown) => {
+        appendLog("system", `Microphone unavailable: ${error instanceof Error ? error.message : String(error)}`);
+      });
+    };
+    ws.onerror = () => appendLog("system", "WebSocket connection failed — is the server running?");
 
     ws.onmessage = (message) => {
       const event = JSON.parse(message.data as string) as
@@ -127,7 +138,7 @@ export default function Home() {
       }
     };
     ws.onclose = () => setState("disconnected");
-  }, [appendLog, playNext]);
+  }, [appendLog, playNext, setupMic]);
 
   const disconnect = useCallback(() => {
     wsRef.current?.send(JSON.stringify({ type: "end-session" }));
@@ -139,8 +150,14 @@ export default function Home() {
     setState("disconnected");
   }, [stopPlayback]);
 
-  useEffect(() => () => disconnect(), [disconnect]);
-  useEffect(() => logEndRef.current?.scrollIntoView({ behavior: "smooth" }), [log]);
+  useEffect(() => {
+    return () => {
+      disconnect();
+    };
+  }, [disconnect]);
+  useEffect(() => {
+    logEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [log]);
 
   const startHold = () => {
     if (state === "disconnected") return;
@@ -161,6 +178,7 @@ export default function Home() {
 
   const stateLabel: Record<SessionState, string> = {
     disconnected: "Disconnected",
+    connecting: "Connecting…",
     idle: "Idle",
     listening: "Listening",
     thinking: "Thinking…",
@@ -209,12 +227,13 @@ export default function Home() {
         </div>
 
         <div className="flex items-center justify-center gap-4 pb-2">
-          {state === "disconnected" ? (
+          {state === "disconnected" || state === "connecting" ? (
             <button
-              className="rounded-full bg-sky-600 px-8 py-4 text-lg font-semibold hover:bg-sky-500"
-              onClick={() => void connect().catch((e: unknown) => appendLog("system", String(e)))}
+              className="rounded-full bg-sky-600 px-8 py-4 text-lg font-semibold hover:bg-sky-500 disabled:opacity-60"
+              disabled={state === "connecting"}
+              onClick={connect}
             >
-              Connect
+              {state === "connecting" ? "Connecting…" : "Connect"}
             </button>
           ) : (
             <>
