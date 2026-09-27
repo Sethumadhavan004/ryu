@@ -166,6 +166,10 @@ four targets:
 6. **Escape hatch.** LiveKit server is open source (self-host) *or* LiveKit Cloud
    (start here: free tier, zero ops). No lock-in either way.
 
+> **Refined in Research 02:** LiveKit carries the *Converse* mode only. Meeting
+> *Capture* records locally and transcribes in chunks, with no realtime agent, which
+> saves LiveKit minutes and survives bad networks. See [02 §1](./02-models-and-components.md#1-the-key-insight-two-modes-two-pipelines-one-brain).
+
 **Runner-up: Pipecat.** It's the better choice if we wanted a Python-only, integration-heavy
 pipeline. We'd reconsider it if the Node SDK becomes a real blocker.
 
