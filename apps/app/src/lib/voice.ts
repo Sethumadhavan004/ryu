@@ -26,6 +26,8 @@ class VoiceLink {
   private room: Room | null = null;
   private cleanups: (() => void)[] = [];
   private lastActivity = Date.now();
+  private closing = false;
+  private agentWatch: ReturnType<typeof setTimeout> | null = null;
 
   get connected() {
     return this.room?.state === ConnectionState.Connected;
@@ -60,7 +62,14 @@ class VoiceLink {
     }
 
     room.on(RoomEvent.ParticipantAttributesChanged, (_changed, p) => this.onAttributes(p as RemoteParticipant));
-    room.on(RoomEvent.ParticipantConnected, (p) => this.onAttributes(p));
+    room.on(RoomEvent.ParticipantConnected, (p) => {
+      if (p.isAgent) this.agentArrived();
+      this.onAttributes(p);
+    });
+    room.on(RoomEvent.ParticipantDisconnected, (p) => {
+      // An agent that leaves on its own has failed (bad key, quota, crash).
+      if (p.isAgent && !this.closing) void this.fail("Ryu's voice agent disconnected. Check the agent terminal — usually an invalid GOOGLE_API_KEY or quota.");
+    });
     room.on(RoomEvent.TrackSubscribed, (track: RemoteTrack) => this.onTrack(track));
     room.on(RoomEvent.Disconnected, () => {
       const s = useRyu.getState();
@@ -91,9 +100,32 @@ class VoiceLink {
       levels.readers.input = () => Math.min(1, a.calculateVolume() * 1.6);
       this.cleanups.push(() => void a.cleanup());
     }
+    const agentHere = [...room.remoteParticipants.values()].some((p) => p.isAgent);
     for (const p of room.remoteParticipants.values()) this.onAttributes(p);
-    useRyu.getState().set({ voice: "listening" });
+    if (agentHere) this.agentArrived();
+    else {
+      // Joined the room; the agent is dispatched and should arrive in ~1–3 s.
+      useRyu.getState().set({ voice: "connecting" });
+      this.agentWatch = setTimeout(() => {
+        if (![...(this.room?.remoteParticipants.values() ?? [])].some((p) => p.isAgent))
+          void this.fail("No voice agent joined. Is `npm run agent` running (and LiveKit reachable from it)?");
+      }, 12_000);
+    }
     this.markActivity();
+  }
+
+  private agentArrived() {
+    if (this.agentWatch) clearTimeout(this.agentWatch);
+    this.agentWatch = null;
+    const s = useRyu.getState();
+    if (s.voice === "connecting") s.set({ voice: "listening" });
+  }
+
+  private async fail(message: string) {
+    await this.disconnect();
+    const s = useRyu.getState();
+    s.set({ voice: "error", voiceError: message });
+    s.notify({ title: "Voice link lost", body: message, tone: "danger" });
   }
 
   private onAttributes(p: RemoteParticipant) {
@@ -153,8 +185,15 @@ class VoiceLink {
   async disconnect() {
     const r = this.room;
     this.room = null;
+    this.closing = true;
+    if (this.agentWatch) clearTimeout(this.agentWatch);
+    this.agentWatch = null;
     this.teardownLevels();
-    if (r) await r.disconnect();
+    try {
+      if (r) await r.disconnect();
+    } finally {
+      this.closing = false;
+    }
   }
 }
 

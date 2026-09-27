@@ -120,6 +120,10 @@ export default defineAgent({
       }),
     });
 
+    // If the session dies (bad key, quota, network), leave the room so the
+    // app sees the agent go and shows a real error instead of a silent ghost.
+    session.on(voice.AgentSessionEventTypes.Close, () => ctx.shutdown("session closed"));
+
     await session.start({ agent, room: ctx.room });
 
     if (meta.mode === "brief" && meta.brief) {
