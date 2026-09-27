@@ -1,0 +1,453 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ryu HUD Concept</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Space+Grotesk:wght@400;500;600&family=VT323&display=swap" rel="stylesheet">
+<style>
+/* ───────────── HOLO/OS tokens (Research 04 §A2) ───────────── */
+:root{
+  --void:#0E0112; --plum-900:#1A011E; --plum-800:#2E0431; --plum-600:#4A0E50;
+  --magenta-700:#8A1A8C; --magenta-500:#C634C8; --magenta-300:#F04BFF;
+  --holo-700:#2B5F7B; --holo-500:#56C8F0; --holo-300:#9FE8FF; --signal:#7CFFB2;
+  --os-pink:#F386A1; --os-pink-dim:#E57F98; --os-paper:#E9E1E3; --os-ink:#141014; --os-mute:#9a7580;
+  --ease:cubic-bezier(.2,.8,.2,1);
+  --f-pixel:"VT323",ui-monospace,monospace;
+  --f-mono:"JetBrains Mono",ui-monospace,monospace;
+  --f-body:"Space Grotesk",system-ui,sans-serif;
+  --level:0;            /* live audio level 0..1, set from JS */
+  --accent:var(--holo-500);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  background:var(--void); color:var(--os-paper); font-family:var(--f-body);
+  overflow:hidden; -webkit-font-smoothing:antialiased;
+}
+body[data-state="meeting"]{--accent:var(--magenta-500)}
+
+/* ───────────── Space: plum depth + magenta shards + dot grid + scanlines ───────────── */
+.space{position:fixed;inset:0;z-index:0;
+  background:
+    radial-gradient(120% 90% at 50% 45%, var(--plum-800) 0%, var(--plum-900) 38%, var(--void) 75%);
+}
+.shard{position:absolute;opacity:.16;filter:blur(.3px);
+  background:linear-gradient(115deg,transparent 0%,var(--magenta-700) 35%,var(--magenta-300) 70%,transparent 100%);
+  transition:opacity .8s var(--ease);
+}
+.s1{inset:8% -10% auto 35%;height:26%;clip-path:polygon(0 100%,100% 0,100% 12%,8% 100%)}
+.s2{inset:auto 40% 12% -10%;height:30%;clip-path:polygon(0 80%,100% 0,90% 18%,0 100%)}
+.s3{inset:auto -5% 0 45%;height:38%;clip-path:polygon(0 100%,100% 0,100% 30%,25% 100%)}
+body[data-state="meeting"] .shard{opacity:.32}
+.dots{position:fixed;inset:0;z-index:1;pointer-events:none;opacity:.35;
+  background-image:radial-gradient(rgba(243,134,161,.35) 1px,transparent 1.2px);background-size:9px 9px;
+  mask-image:radial-gradient(80% 70% at 50% 50%,#000 20%,transparent 85%)}
+.scan{position:fixed;inset:0;z-index:50;pointer-events:none;opacity:.06;
+  background:repeating-linear-gradient(0deg,#fff 0 1px,transparent 1px 3px)}
+
+/* ───────────── Retro OS window (image 2) ───────────── */
+.win{position:relative;background:rgba(26,1,30,.72);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  border:1px solid var(--holo-700);box-shadow:0 0 0 1px rgba(0,0,0,.5),0 18px 40px -20px rgba(0,0,0,.8),0 0 24px -12px var(--accent);
+}
+.win::before{content:"";position:absolute;inset:0;pointer-events:none;opacity:.25;
+  background-image:radial-gradient(rgba(86,200,240,.45) .8px,transparent 1px);background-size:7px 7px}
+.tb{position:relative;display:flex;align-items:center;gap:8px;height:24px;padding:0 8px;
+  background:var(--os-ink);font:20px/1 var(--f-pixel);letter-spacing:.5px;color:var(--os-paper);text-transform:uppercase;white-space:nowrap;overflow:hidden}
+.tb .tag{background:var(--os-pink);color:var(--os-ink);padding:0 5px;font-size:18px}
+.tb .sp{flex:1}
+.tb .live{color:var(--magenta-300)}
+.body{position:relative;padding:12px}
+
+/* ───────────── Chrome: top bar ───────────── */
+.top{position:fixed;z-index:10;top:14px;left:16px;right:16px;display:flex;gap:12px;align-items:flex-start;justify-content:space-between}
+.brand{white-space:nowrap;font:22px/24px var(--f-pixel);background:var(--os-ink);padding:0 8px;letter-spacing:1px}
+.brand b{color:var(--os-pink);font-weight:400}
+.mic{display:flex;align-items:center;gap:8px;font:600 11px/1 var(--f-mono);letter-spacing:.12em;text-transform:uppercase;
+  padding:7px 12px;border:1px solid currentColor;background:rgba(14,1,18,.6);color:var(--holo-500);transition:color .3s}
+.mic i{width:8px;height:8px;border-radius:50%;background:currentColor;box-shadow:0 0 10px currentColor;animation:pulse 1.6s infinite}
+body[data-state="meeting"] .mic{color:var(--magenta-300)}
+body[data-state="processing"] .mic,body[data-state="boot"] .mic{color:var(--os-mute)}
+body[data-state="processing"] .mic i,body[data-state="boot"] .mic i{animation:none;box-shadow:none}
+.clock{width:230px;border:1px solid var(--os-pink);background:rgba(243,134,161,.08);transition:opacity .4s}
+body[data-state="meeting"] .clock,body[data-state="processing"] .clock{opacity:0}
+.clock .tb{background:var(--os-ink)}
+.clock .body{font:20px/1.1 var(--f-pixel);color:var(--os-pink);padding:6px 8px}
+@keyframes pulse{50%{opacity:.35}}
+
+/* ───────────── Stage & orb ───────────── */
+.stage{position:fixed;inset:0;z-index:5;display:grid;place-items:center}
+.orb{position:relative;width:min(58vmin,420px);aspect-ratio:1;transition:transform .7s var(--ease),opacity .5s}
+.orb svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
+.ring{fill:none;stroke:var(--accent);transform-origin:50% 50%;transition:stroke .5s}
+.r1{stroke-width:.6;opacity:.5;stroke-dasharray:1 3;animation:spin 40s linear infinite}
+.r2{stroke-width:1.4;opacity:.8;stroke-dasharray:60 14 4 14;animation:spin 18s linear infinite reverse}
+.r3{stroke-width:.8;opacity:.6;stroke-dasharray:2 6;animation:spin 26s linear infinite}
+.r4{stroke-width:2.4;opacity:.9;stroke-dasharray:22 200;animation:spin 6s linear infinite}
+.ticks line{stroke:var(--accent);stroke-width:.8;opacity:.55}
+.core{position:absolute;inset:34%;border-radius:50%;
+  background:radial-gradient(circle,var(--holo-300) 0%,var(--holo-500) 30%,rgba(86,200,240,.15) 62%,transparent 70%);
+  transform:scale(calc(.82 + var(--level)*.5));filter:blur(calc(1px + var(--level)*3px));transition:background .5s}
+body[data-state="meeting"] .core{background:radial-gradient(circle,#ffd4ff 0%,var(--magenta-300) 26%,rgba(198,52,200,.2) 62%,transparent 70%)}
+.halo{position:absolute;inset:18%;border-radius:50%;box-shadow:0 0 calc(40px + var(--level)*90px) calc(var(--level)*20px) var(--accent);opacity:.35}
+@keyframes spin{to{transform:rotate(360deg)}}
+.orb-label{position:absolute;left:50%;bottom:-4px;transform:translateX(-50%);font:600 10px/1 var(--f-mono);letter-spacing:.3em;color:var(--accent);opacity:.8;white-space:nowrap}
+
+/* state: orb positions */
+body[data-state="meeting"] .orb{transform:translate(0,-6vh) scale(.42)}
+body[data-state="processing"] .orb{transform:scale(.55);opacity:.7}
+body[data-state="notes"] .orb{transform:scale(.33);opacity:.9}
+body[data-state="boot"] .orb{opacity:.15;transform:scale(.8)}
+
+/* ───────────── Captions ───────────── */
+.captions{position:fixed;z-index:10;left:50%;bottom:88px;transform:translateX(-50%);width:min(680px,calc(100% - 32px));
+  font:15px/1.5 var(--f-body);text-align:center;transition:opacity .4s;pointer-events:none}
+.captions .who{font:600 10px/1 var(--f-mono);letter-spacing:.2em;margin-right:8px;text-transform:uppercase}
+.captions .you .who{color:var(--os-pink)} .captions .ryu .who{color:var(--holo-500)}
+.captions p{opacity:.92;margin-top:4px}
+body[data-state="meeting"] .captions,body[data-state="boot"] .captions,body[data-state="processing"] .captions,body.reading .captions{opacity:0}
+.captions .empty{display:none}
+
+/* ───────────── Boot ───────────── */
+.boot{position:fixed;z-index:20;left:50%;top:50%;transform:translate(-50%,-50%);width:min(460px,calc(100% - 32px));transition:opacity .4s}
+.boot .body{font:13px/1.9 var(--f-mono)}
+.boot .ln{display:flex;justify-content:space-between;opacity:0;transform:translateX(-6px);animation:in .3s var(--ease) forwards;animation-delay:calc(var(--i)*170ms)}
+.boot .ok{color:var(--signal)} .boot .ln span:first-child{color:var(--holo-300)}
+body:not([data-state="boot"]) .boot{opacity:0;pointer-events:none}
+
+/* ───────────── Meeting HUD ───────────── */
+.hud{position:fixed;z-index:8;inset:76px 16px 84px;display:grid;gap:12px;
+  grid-template-columns:1.25fr .6fr 1fr;grid-template-rows:1fr auto;pointer-events:none}
+.hud .win{opacity:0;transform:scale(.96) translateY(8px);transition:opacity .45s var(--ease),transform .45s var(--ease);transition-delay:calc(var(--i)*70ms)}
+body[data-state="meeting"] .hud .win{opacity:1;transform:none;pointer-events:auto;animation:glitch .5s steps(2) calc(var(--i)*70ms + .2s) 1}
+@keyframes glitch{0%{transform:translateX(3px);filter:hue-rotate(40deg)}50%{transform:translateX(-2px)}100%{transform:none;filter:none}}
+.w-transcript{grid-column:1;grid-row:1 / span 2;display:flex;flex-direction:column;min-height:0}
+.w-ledger{grid-column:3;grid-row:1;min-height:0;display:flex;flex-direction:column}
+.w-speakers{grid-column:3;grid-row:2}
+.w-signal{grid-column:2;grid-row:2;align-self:end}
+.scroll{overflow:auto;min-height:0;flex:1;scrollbar-width:thin;scrollbar-color:var(--holo-700) transparent}
+.line{display:grid;grid-template-columns:64px 1fr;gap:10px;padding:6px 0;border-bottom:1px dashed rgba(43,95,123,.35);animation:in .35s var(--ease)}
+.line .meta{font:11px/1.5 var(--f-mono);color:var(--os-mute)}
+.line .meta b{display:block;font-weight:600;color:var(--c,var(--holo-500))}
+.line p{font-size:14px;line-height:1.5}
+.line.draft p{opacity:.6}
+@keyframes in{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+.atom{display:flex;gap:10px;padding:8px 0;border-bottom:1px dashed rgba(43,95,123,.35);animation:in .4s var(--ease)}
+.atom .k{flex:none;font:600 10px/18px var(--f-mono);letter-spacing:.1em;padding:0 6px;height:18px;border:1px solid}
+.k.D{color:var(--holo-300)} .k.C{color:var(--magenta-300)} .k.Q{color:var(--os-pink)}
+.atom p{font-size:13px;line-height:1.45}
+.atom small{display:block;font:11px var(--f-mono);color:var(--os-mute);margin-top:2px}
+.prov{font:10px var(--f-mono);letter-spacing:.15em;color:var(--os-mute);text-transform:uppercase}
+.spk{display:grid;grid-template-columns:auto 1fr 44px;gap:10px;align-items:center;padding:5px 0;font:12px var(--f-mono)}
+.spk .dot{width:8px;height:8px;border-radius:50%;background:var(--c)}
+.meter{height:6px;background:rgba(43,95,123,.35);position:relative;overflow:hidden}
+.meter i{position:absolute;inset:0 auto 0 0;width:var(--m,10%);background:var(--c);transition:width .12s}
+.signal canvas{display:block;width:100%;height:56px}
+.timer{font:34px/1 var(--f-pixel);color:var(--magenta-300);letter-spacing:2px;margin-top:6px}
+.stopbtn{margin-top:8px;width:100%;font:600 11px/1 var(--f-mono);letter-spacing:.2em;padding:10px;background:transparent;color:var(--magenta-300);border:1px solid var(--magenta-500);cursor:pointer}
+.stopbtn:hover{background:rgba(198,52,200,.15)}
+
+/* ───────────── Processing ───────────── */
+.pipe{position:fixed;z-index:9;left:50%;top:22%;transform:translateX(-50%);display:flex;gap:6px;flex-wrap:wrap;justify-content:center;transition:opacity .4s}
+.stg{font:600 11px/1 var(--f-mono);letter-spacing:.14em;padding:9px 12px;border:1px solid var(--holo-700);color:var(--os-mute);background:rgba(14,1,18,.7);transition:all .3s}
+.stg.on{color:var(--holo-300);border-color:var(--holo-500);box-shadow:0 0 18px -6px var(--holo-500)}
+.stg.done{color:var(--signal);border-color:rgba(124,255,178,.5)}
+body:not([data-state="processing"]) .pipe{opacity:0;pointer-events:none}
+
+/* ───────────── Notes constellation ───────────── */
+.const{position:fixed;z-index:9;inset:70px 16px 84px;pointer-events:none}
+.card{position:absolute;width:min(250px,42vw);left:var(--x);top:var(--y);transform:translate(-50%,-50%) scale(.9);opacity:0;
+  transition:opacity .5s var(--ease),transform .5s var(--ease);cursor:pointer}
+.card.show{opacity:1;transform:translate(-50%,-50%) scale(1);pointer-events:auto}
+.card:hover{box-shadow:0 0 0 1px var(--holo-500),0 0 30px -8px var(--holo-500)}
+.card.me .tb .tag{background:var(--os-pink)} .card.meet .tb .tag{background:var(--holo-500)}
+.card .body p{font-size:13px;line-height:1.45}
+.card .cnt{display:flex;flex-wrap:wrap;gap:4px 10px;white-space:nowrap;margin-top:8px;font:11px var(--f-mono);color:var(--os-mute)}
+.card .cnt b{color:var(--os-paper)}
+.links{position:absolute;inset:0;width:100%;height:100%}
+.links line{stroke:var(--holo-700);stroke-width:1;stroke-dasharray:3 5;opacity:0;transition:opacity .6s}
+body[data-state="notes"] .links line.show{opacity:.8}
+
+/* detail window */
+.detail{position:fixed;z-index:30;left:50%;top:50%;width:min(620px,calc(100% - 32px));max-height:calc(100% - 160px);display:flex;flex-direction:column;
+  transform:translate(-50%,-48%) scale(.97);opacity:0;pointer-events:none;transition:all .35s var(--ease);background:rgba(20,1,24,.94)}
+.detail.open{opacity:1;transform:translate(-50%,-50%);pointer-events:auto}
+.detail .body{overflow:auto}
+.detail h2{font:600 22px/1.25 var(--f-body);margin-bottom:6px}
+.detail .hl{color:var(--holo-300);font-size:15px;margin-bottom:14px}
+.detail h3{font:600 10px/1 var(--f-mono);letter-spacing:.22em;color:var(--os-pink);text-transform:uppercase;margin:16px 0 8px}
+.detail li{list-style:none;display:grid;grid-template-columns:34px 1fr;gap:8px;padding:6px 0;border-bottom:1px dashed rgba(43,95,123,.35);font-size:14.5px;line-height:1.5}
+.detail li code{font:600 11px/22px var(--f-mono);color:var(--magenta-300)}
+.detail li small{display:block;color:var(--os-mute);font:11px var(--f-mono)}
+.x{background:none;border:0;color:var(--os-paper);font:20px var(--f-pixel);cursor:pointer}
+
+/* ───────────── Dev dock (concept only) ───────────── */
+.dock{position:fixed;z-index:40;left:50%;bottom:16px;transform:translateX(-50%);display:flex;gap:4px;padding:4px;background:var(--os-ink);border:1px solid var(--plum-600);max-width:calc(100% - 32px);overflow-x:auto}
+.dock button{font:18px/1 var(--f-pixel);padding:6px 10px;background:transparent;color:var(--os-mute);border:0;cursor:pointer;white-space:nowrap}
+.dock button.on{background:var(--os-pink);color:var(--os-ink)}
+.dock .say{color:var(--holo-500)}
+
+/* ───────────── Responsive ───────────── */
+@media (max-width:820px){
+  .clock{display:none}
+  .hud{grid-template-columns:1fr;grid-template-rows:1.3fr 1fr auto;inset:70px 16px 76px}
+  .w-transcript{grid-column:1;grid-row:1}
+  .w-ledger{grid-column:1;grid-row:2}
+  .w-speakers{display:none}
+  .w-signal{grid-column:1;grid-row:3}
+  body[data-state="meeting"] .orb{transform:translate(0,-38vh) scale(.2)}
+  .card{width:min(210px,45vw)}
+  .card .body{padding:9px}
+  .card .body p{font-size:12px}
+  .captions{font-size:13px;bottom:80px}
+  .mic{font-size:10px;padding:6px 8px}
+}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation:none!important;transition-duration:.01ms!important}
+  .scan{display:none}
+}
+</style>
+</head>
+<body data-state="boot">
+<div class="space"><div class="shard s1"></div><div class="shard s2"></div><div class="shard s3"></div></div>
+<div class="dots"></div>
+
+<!-- top chrome -->
+<header class="top">
+  <div class="brand">RYU<b>.</b>OS 1.0</div>
+  <div class="mic" id="mic"><i></i><span id="micText">Linking…</span></div>
+  <div class="win clock"><div class="tb">Clock Tool 1.1</div><div class="body" id="clock">—</div></div>
+</header>
+
+<!-- orb -->
+<main class="stage">
+  <div class="orb" id="orb">
+    <div class="halo"></div>
+    <svg viewBox="0 0 200 200" aria-hidden="true">
+      <circle class="ring r1" cx="100" cy="100" r="96"/>
+      <circle class="ring r2" cx="100" cy="100" r="82"/>
+      <g class="ticks" id="ticks"></g>
+      <circle class="ring r3" cx="100" cy="100" r="60"/>
+      <circle class="ring r4" cx="100" cy="100" r="70"/>
+    </svg>
+    <div class="core"></div>
+    <div class="orb-label" id="orbLabel">LISTENING</div>
+  </div>
+</main>
+
+<!-- boot -->
+<section class="win boot" aria-live="polite">
+  <div class="tb"><span class="tag">SYS</span>RYU.OS // BOOT<span class="sp"></span>v1.0</div>
+  <div class="body" id="bootLog"></div>
+</section>
+
+<!-- captions -->
+<section class="captions" id="captions" aria-live="polite">
+  <div class="you" id="rowYou"><span class="who">You</span><span id="capYou">…</span></div>
+  <p class="ryu"><span class="who">Ryu</span><span id="capRyu">Ryu online. What are we doing?</span></p>
+</section>
+
+<!-- meeting HUD -->
+<section class="hud" aria-label="Meeting HUD">
+  <div class="win w-transcript" style="--i:0">
+    <div class="tb"><span class="tag">01</span>Transcript<span class="sp"></span><span class="live">● draft</span></div>
+    <div class="body scroll" id="tx"></div>
+  </div>
+  <div class="win w-ledger" style="--i:1">
+    <div class="tb"><span class="tag">02</span>Live Ledger<span class="sp"></span><span class="prov">provisional</span></div>
+    <div class="body scroll" id="ledger"></div>
+  </div>
+  <div class="win w-speakers" style="--i:2">
+    <div class="tb"><span class="tag">03</span>Speakers</div>
+    <div class="body" id="spk"></div>
+  </div>
+  <div class="win w-signal signal" style="--i:3">
+    <div class="tb"><span class="tag">04</span>Signal<span class="sp"></span>REC</div>
+    <div class="body"><canvas id="wave"></canvas><div class="timer" id="timer">00:00</div>
+      <button class="stopbtn" id="stop">■ STOP MEETING</button></div>
+  </div>
+</section>
+
+<!-- processing -->
+<div class="pipe" id="pipe">
+  <span class="stg">TRANSCRIBE</span><span class="stg">IDENTIFY</span><span class="stg">LEDGER</span><span class="stg">VERIFY</span><span class="stg">NOTES</span>
+</div>
+
+<!-- notes constellation -->
+<section class="const" id="const"><svg class="links" id="links"></svg></section>
+
+<!-- note detail -->
+<section class="win detail" id="detail">
+  <div class="tb"><span class="tag" id="dTag">NOTE</span><span id="dTitle">—</span><span class="sp"></span><button class="x" id="dClose" aria-label="Close">×</button></div>
+  <div class="body" id="dBody"></div>
+</section>
+
+<!-- concept-only state dock -->
+<nav class="dock" id="dock">
+  <button data-go="boot">BOOT</button><button data-go="listening">LISTEN</button>
+  <button data-go="meeting">MEETING</button><button data-go="processing">PROCESS</button>
+  <button data-go="notes">NOTES n+1</button><button class="say" id="micBtn">◉ USE MIC</button>
+</nav>
+
+<script>
+/* ───────── Sample meeting (what the pipeline would produce) ───────── */
+const SPK = {
+  S1:{name:"You",c:"var(--os-pink)",me:true},
+  S2:{name:"Priya",c:"var(--holo-500)"},
+  S3:{name:"Arjun",c:"var(--signal)"}
+};
+const LINES = [
+  ["S2","00:00:12","Okay, so the main thing today is whether we ship the Q4 launch on the fifteenth."],
+  ["S3","00:00:21","Honestly the onboarding flow isn't ready. I'd push a week."],
+  ["S1","00:00:30","If we push, marketing needs to know by Friday. I'll tell them once we decide."],
+  ["S2","00:00:41","Let's keep the fifteenth but cut the tutorial screen. Everyone okay with that?"],
+  ["S3","00:00:47","Fine by me. I'll have the trimmed flow in staging by Wednesday."],
+  ["S1","00:00:55","Great. Priya, can you send me the updated metrics deck?"],
+  ["S2","00:01:02","Sure, I'll send it tomorrow morning."],
+  ["S3","00:01:09","Open question: who's on call for launch night?"],
+];
+const LEDGER = [
+  {k:"D",id:"D1",t:"Ship Q4 launch on the 15th; cut the tutorial screen.",e:"U004–U005"},
+  {k:"C",id:"C1",t:"Arjun → trimmed onboarding flow in staging by Wed.",e:"U005 · firm"},
+  {k:"C",id:"C2",t:"You → notify marketing once the date is final (by Fri).",e:"U003 · firm"},
+  {k:"C",id:"C3",t:"Priya → send updated metrics deck to you, tomorrow AM.",e:"U006–U007 · firm"},
+  {k:"Q",id:"Q1",t:"Who is on call for launch night?",e:"U008 · unanswered"},
+];
+const NOTES = {
+  meeting:{tag:"MEETING",title:"Q4 launch: ship on the 15th",hl:"Launch stays on the 15th with the tutorial cut; one staffing question is open.",
+    sec:[["Decisions",["D1"]],["Action items",["C1","C2","C3"]],["Open questions",["Q1"]]],cnt:[1,3,1]},
+  S1:{tag:"YOU",title:"Your notes",hl:"You owe marketing the final date by Friday, and Priya owes you the metrics deck.",
+    sec:[["Your actions",["C2"]],["Owed to you",["C3"]],["Decisions affecting you",["D1"]]],cnt:[1,1,1]},
+  S2:{tag:"PRIYA",title:"Priya's notes",hl:"Priya's proposal to keep the date was adopted; she's sending the metrics deck.",
+    sec:[["Priya's actions",["C3"]],["Decisions she drove",["D1"]]],cnt:[1,0,1]},
+  S3:{tag:"ARJUN",title:"Arjun's notes",hl:"Arjun owns the trimmed onboarding flow by Wednesday and raised the on-call gap.",
+    sec:[["Arjun's actions",["C1"]],["Questions he raised",["Q1"]],["Decisions affecting him",["D1"]]],cnt:[1,0,1]},
+};
+const byId = Object.fromEntries(LEDGER.map(a=>[a.id,a]));
+
+/* ───────── helpers ───────── */
+const $ = s=>document.querySelector(s);
+const root = document.documentElement;
+let state="boot", timers=[];
+const later=(fn,ms)=>timers.push(setTimeout(fn,ms));
+let timerInt=null;
+const clearAll=()=>{timers.forEach(clearTimeout);timers=[];clearInterval(timerInt)};
+
+/* ticks around the orb */
+(()=>{const g=$("#ticks");for(let i=0;i<72;i++){const a=i/72*Math.PI*2,r1=88,r2=i%6?91:95;
+  const l=document.createElementNS("http://www.w3.org/2000/svg","line");
+  l.setAttribute("x1",100+Math.cos(a)*r1);l.setAttribute("y1",100+Math.sin(a)*r1);
+  l.setAttribute("x2",100+Math.cos(a)*r2);l.setAttribute("y2",100+Math.sin(a)*r2);g.appendChild(l)}})();
+
+/* clock (image 2) */
+const tick=()=>{const d=new Date();$("#clock").innerHTML=d.toLocaleDateString(undefined,{weekday:"long",month:"short",day:"numeric",year:"numeric"})+"<br>"+d.toLocaleTimeString([], {hour12:false})};
+tick();setInterval(tick,1000);
+
+/* ───────── audio level: real mic if allowed, else simulated ───────── */
+let analyser=null,buf=null,level=0;
+$("#micBtn").onclick=async()=>{
+  try{const s=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true}});
+    const ctx=new AudioContext();analyser=ctx.createAnalyser();analyser.fftSize=1024;
+    ctx.createMediaStreamSource(s).connect(analyser);buf=new Float32Array(analyser.fftSize);
+    $("#micBtn").textContent="◉ MIC LIVE";}catch(e){$("#micBtn").textContent="◌ MIC DENIED";}
+};
+const wave=$("#wave"),wctx=wave.getContext("2d"),hist=new Array(120).fill(0);
+let simT=0;
+function frame(){
+  let target;
+  if(analyser){analyser.getFloatTimeDomainData(buf);let s=0;for(const v of buf)s+=v*v;target=Math.min(1,Math.sqrt(s/buf.length)*6)}
+  else{simT+=.05;target=state==="listening"||state==="meeting"?Math.max(0,(Math.sin(simT)*.5+.5)*(Math.sin(simT*.37)*.5+.5)*.9+Math.random()*.08):.05}
+  level+= (target-level)*.18;                      /* ~80 ms smoothing */
+  root.style.setProperty("--level",level.toFixed(3));
+  hist.push(level);hist.shift();
+  if(state==="meeting"){
+    const w=wave.width=wave.clientWidth*devicePixelRatio,h=wave.height=56*devicePixelRatio;
+    wctx.strokeStyle="#F04BFF";wctx.lineWidth=1.5*devicePixelRatio;wctx.beginPath();
+    hist.forEach((v,i)=>{const x=i/(hist.length-1)*w,y=h/2+Math.sin(i*.9)*v*h*.45;i?wctx.lineTo(x,y):wctx.moveTo(x,y)});wctx.stroke();
+    document.querySelectorAll(".spk").forEach((el,i)=>el.style.setProperty("--m",(i===activeSpk?Math.min(100,level*140+10):6+Math.random()*6)+"%"));
+  }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+/* ───────── states ───────── */
+let activeSpk=0,t0=0;
+const setYou=t=>{$("#capYou").textContent=t;$("#rowYou").classList.toggle("empty",!t)};
+function go(next){
+  clearAll();state=next;document.body.dataset.state=next;
+  document.querySelectorAll("#dock button[data-go]").forEach(b=>b.classList.toggle("on",b.dataset.go===next));
+  $("#detail").classList.remove("open");document.body.classList.remove("reading");
+  ({boot,listening,meeting,processing,notes})[next]();
+}
+function boot(){
+  $("#micText").textContent="Linking…";
+  const steps=[["LIVEKIT TOKEN","OK"],["ROOM JOIN · WEBRTC","OK"],["MIC · ECHO CANCEL","OK"],["AGENT · GEMINI LIVE","OK"],["TURN DETECTOR","READY"]];
+  $("#bootLog").innerHTML=steps.map((s,i)=>`<div class="ln" style="--i:${i}"><span>${s[0]}</span><span class="ok">${s[1]}</span></div>`).join("");
+  later(()=>go("listening"),steps.length*170+700);
+}
+function listening(){
+  $("#micText").textContent="Ryu · listening";$("#orbLabel").textContent="LISTENING";
+  setYou("");$("#capRyu").textContent="Ryu online. What are we doing?";
+  later(()=>{setYou("Hey Ryu, start the meeting with Priya and Arjun about the Q4 launch.")},1600);
+  later(()=>{$("#capRyu").textContent="Recording. I'll stay quiet."},3000);
+  later(()=>go("meeting"),4300);
+}
+function meeting(){
+  $("#micText").textContent="REC on · Ryu not listening";$("#orbLabel").textContent="REC";
+  $("#tx").innerHTML="";$("#ledger").innerHTML="";
+  $("#spk").innerHTML=Object.values(SPK).map(s=>`<div class="spk" style="--c:${s.c}"><span class="dot"></span><span>${s.name}${s.me?" · mic":""}</span><div class="meter"><i></i></div></div>`).join("");
+  t0=Date.now();
+  timerInt=setInterval(()=>{const s=Math.floor((Date.now()-t0)/1000);$("#timer").textContent=String(Math.floor(s/60)).padStart(2,"0")+":"+String(s%60).padStart(2,"0")},250);
+  LINES.forEach((l,i)=>later(()=>{
+    activeSpk=Object.keys(SPK).indexOf(l[0]);const s=SPK[l[0]];
+    const el=document.createElement("div");el.className="line draft";el.style.setProperty("--c",s.c);
+    el.innerHTML=`<div class="meta"><b>${s.name}</b>${l[1].slice(3)}</div><p>${l[2]}</p>`;
+    $("#tx").appendChild(el);$("#tx").scrollTop=1e6;
+  },900+i*1400));
+  [[4,0],[5,1],[6,2],[7,3],[8,4]].forEach(([at,j])=>later(()=>{
+    const a=LEDGER[j],el=document.createElement("div");el.className="atom";
+    el.innerHTML=`<span class="k ${a.k}">${a.id}</span><div><p>${a.t}</p><small>${a.e}</small></div>`;
+    $("#ledger").appendChild(el);$("#ledger").scrollTop=1e6;
+  },900+at*1400+500));
+}
+$("#stop").onclick=()=>go("processing");
+function processing(){
+  $("#micText").textContent="Processing · mic off";$("#orbLabel").textContent="THINKING";
+  const st=[...document.querySelectorAll(".stg")];st.forEach(s=>s.className="stg");
+  st.forEach((s,i)=>{later(()=>{s.classList.add("on")},i*800);later(()=>{s.classList.remove("on");s.classList.add("done")},i*800+700)});
+  later(()=>go("notes"),st.length*800+400);
+}
+function notes(){
+  $("#micText").textContent="Ryu · listening";$("#orbLabel").textContent="LISTENING";
+  setYou("");$("#capRyu").textContent="Done. One decision, three action items. One is yours: tell marketing the date by Friday. Want your to-dos?";
+  const c=$("#const");c.querySelectorAll(".card").forEach(n=>n.remove());
+  const mob=innerWidth<820;
+  const pos={meeting:["50%",mob?"11%":"22%"],S1:[mob?"26%":"22%",mob?"40%":"60%"],S2:["50%",mob?"71%":"77%"],S3:[mob?"74%":"78%",mob?"40%":"60%"]};
+  const svg=$("#links");svg.innerHTML="";
+  Object.entries(NOTES).forEach(([k,n],i)=>{
+    const d=document.createElement("div");d.className="win card"+(k==="meeting"?" meet":"")+(SPK[k]?.me?" me":"");
+    d.style.setProperty("--x",pos[k][0]);d.style.setProperty("--y",pos[k][1]);
+    d.innerHTML=`<div class="tb"><span class="tag">${n.tag}</span>${k==="meeting"?"n+1 · core":"person"}</div><div class="body"><p>${n.hl}</p>
+      <div class="cnt"><span><b>${n.cnt[0]}</b> ${k==="meeting"?"dec":"to-do"}</span><span><b>${n.cnt[1]}</b> ${k==="meeting"?"actions":"owed"}</span><span><b>${n.cnt[2]}</b> ${k==="meeting"?"open":"related"}</span></div></div>`;
+    d.onclick=()=>openNote(k);c.appendChild(d);later(()=>d.classList.add("show"),200+i*450);
+    if(k!=="meeting"){const l=document.createElementNS("http://www.w3.org/2000/svg","line");
+      l.setAttribute("x1",pos.meeting[0]);l.setAttribute("y1",pos.meeting[1]);l.setAttribute("x2",pos[k][0]);l.setAttribute("y2",pos[k][1]);
+      svg.appendChild(l);later(()=>l.classList.add("show"),200+i*450)}
+  });
+}
+function openNote(k){
+  const n=NOTES[k];$("#dTag").textContent=n.tag;$("#dTitle").textContent=k==="meeting"?"Meeting note":"Person note";
+  $("#dBody").innerHTML=`<h2>${n.title}</h2><p class="hl">${n.hl}</p>`+n.sec.map(([h,ids])=>`<h3>${h}</h3><ul>${ids.map(id=>`<li><code>${id}</code><div>${byId[id].t}<small>evidence ${byId[id].e}</small></div></li>`).join("")}</ul>`).join("")
+    +`<h3>Why the IDs</h3><p style="font-size:13px;color:var(--os-mute);line-height:1.5">Every item is a ledger atom rendered from one source, so the meeting note and each person note can never disagree.</p>`;
+  $("#detail").classList.add("open");document.body.classList.add("reading");
+}
+const closeNote=()=>{$("#detail").classList.remove("open");document.body.classList.remove("reading")};
+$("#dClose").onclick=closeNote;
+document.addEventListener("keydown",e=>{if(e.key==="Escape")closeNote()});
+$("#dock").addEventListener("click",e=>{const g=e.target.dataset.go;if(g)go(g)});
+go("boot");
+</script>
+</body>
+</html>
