@@ -177,7 +177,7 @@ TTS audio goes to the speaker frame by frame. Nothing should wait for a "complet
 
 | Platform | Meeting type | How we capture | Caveat |
 |---|---|---|---|
-| **Web (Next.js)** | Online (Meet/Zoom/Teams in browser) | `getDisplayMedia` **tab audio** + `getUserMedia` mic, mixed with Web Audio → `MediaRecorder` | Tab-audio sharing works reliably only in Chromium; the user picks the tab. No bot joins the call |
+| **Web (Next.js)** | Online (Meet/Zoom/Teams in browser) | `getDisplayMedia` **tab audio** + `getUserMedia` mic, recorded as **stereo (mic L / tab R)**, not mixed. See [03 §4c](./03-brain-and-data.md#4c-ryus-speaker-strategy-an-evidence-ladder) → `MediaRecorder` | Tab-audio sharing works reliably only in Chromium; the user picks the tab. No bot joins the call |
 | **Web** | In-person | Mic only | — |
 | **Mobile (Expo)** | In-person | `expo-audio` recorder, iOS `UIBackgroundModes: audio` so it keeps recording when locked | iOS/Android **cannot capture other apps' audio**. For online calls on a phone, use speakerphone + mic |
 | Both | Any | **Record locally first, upload 30 s chunks, retry on reconnect** | Offline-first: a dead network must never lose a meeting |
