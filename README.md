@@ -10,6 +10,8 @@
 
 ---
 
+> Requires **Node 22.12+** (the scripts use Node's built-in `.env` loading).
+
 ## Try it in 60 seconds (no keys)
 
 ```bash

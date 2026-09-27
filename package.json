@@ -2,7 +2,10 @@
   "name": "ryu",
   "private": true,
   "version": "0.1.0",
-  "workspaces": ["apps/*", "packages/*"],
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
     "dev": "concurrently -n server,agent,app -c blue,magenta,cyan \"npm:dev -w @ryu/server\" \"npm:agent -w @ryu/server\" \"npm:web -w @ryu/app\"",
     "dev:demo": "npm run web -w @ryu/app",
@@ -12,5 +15,8 @@
   },
   "devDependencies": {
     "concurrently": "^9.2.1"
+  },
+  "engines": {
+    "node": ">=22.12"
   }
 }
