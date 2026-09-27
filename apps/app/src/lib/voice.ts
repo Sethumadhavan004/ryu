@@ -1,0 +1,161 @@
+import {
+  ConnectionState,
+  createAudioAnalyser,
+  type RemoteAudioTrack,
+  type RemoteParticipant,
+  type RemoteTrack,
+  Room,
+  RoomEvent,
+  type RpcInvocationData,
+  Track,
+} from "livekit-client";
+import { Platform } from "react-native";
+import { levels } from "../state/levels";
+import { useRyu, type VoiceStatus } from "../state/store";
+import { api } from "./api";
+import { prepareVoicePlatform } from "./voice-platform";
+
+export type RpcHandlers = Record<string, (payload: Record<string, unknown>) => Promise<string>>;
+
+/**
+ * The Converse link (Research 01/04): WebRTC room with the Ryu agent.
+ * Everything here maps real connection/agent state onto the UI —
+ * the orb only moves when something real happens.
+ */
+class VoiceLink {
+  private room: Room | null = null;
+  private cleanups: (() => void)[] = [];
+  private lastActivity = Date.now();
+
+  get connected() {
+    return this.room?.state === ConnectionState.Connected;
+  }
+
+  markActivity() {
+    this.lastActivity = Date.now();
+  }
+  idleFor() {
+    return Date.now() - this.lastActivity;
+  }
+
+  async connect(mode: "boot" | "brief" | "wake", handlers: RpcHandlers, brief?: string) {
+    const st = useRyu.getState();
+    if (this.room) await this.disconnect();
+    st.set({ voice: "connecting", voiceError: null });
+    await prepareVoicePlatform();
+
+    const { url, token } = await api.token(mode, brief);
+    const room = new Room({ adaptiveStream: true, dynacast: true });
+    this.room = room;
+
+    for (const [method, fn] of Object.entries(handlers)) {
+      room.registerRpcMethod(method, async (d: RpcInvocationData) => {
+        this.markActivity();
+        let payload: Record<string, unknown> = {};
+        try {
+          payload = d.payload ? (JSON.parse(d.payload) as Record<string, unknown>) : {};
+        } catch {}
+        return fn(payload);
+      });
+    }
+
+    room.on(RoomEvent.ParticipantAttributesChanged, (_changed, p) => this.onAttributes(p as RemoteParticipant));
+    room.on(RoomEvent.ParticipantConnected, (p) => this.onAttributes(p));
+    room.on(RoomEvent.TrackSubscribed, (track: RemoteTrack) => this.onTrack(track));
+    room.on(RoomEvent.Disconnected, () => {
+      const s = useRyu.getState();
+      if (s.voice !== "dormant" && s.voice !== "off" && s.voice !== "muted") s.set({ voice: "off" });
+      this.teardownLevels();
+    });
+
+    room.registerTextStreamHandler("lk.transcription", async (reader) => {
+      const localTrack = room.localParticipant.getTrackPublication(Track.Source.Microphone)?.trackSid;
+      const attrs = reader.info.attributes ?? {};
+      const who: "you" | "ryu" = localTrack && attrs["lk.transcribed_track_id"] === localTrack ? "you" : "ryu";
+      const id = reader.info.id;
+      let text = "";
+      for await (const chunk of reader) {
+        text += chunk;
+        this.markActivity();
+        useRyu.getState().caption({ id, who, text, final: false });
+      }
+      useRyu.getState().caption({ id, who, text, final: true });
+    });
+
+    await room.connect(url, token);
+    await room.localParticipant.setMicrophoneEnabled(true, { echoCancellation: true, noiseSuppression: true, autoGainControl: true });
+
+    const mic = room.localParticipant.getTrackPublication(Track.Source.Microphone)?.audioTrack;
+    if (mic && Platform.OS === "web") {
+      const a = createAudioAnalyser(mic as never, { cloneTrack: true });
+      levels.readers.input = () => Math.min(1, a.calculateVolume() * 1.6);
+      this.cleanups.push(() => void a.cleanup());
+    }
+    for (const p of room.remoteParticipants.values()) this.onAttributes(p);
+    useRyu.getState().set({ voice: "listening" });
+    this.markActivity();
+  }
+
+  private onAttributes(p: RemoteParticipant) {
+    const state = p.attributes?.["lk.agent.state"];
+    if (!state) return;
+    const map: Record<string, VoiceStatus> = {
+      initializing: "connecting",
+      listening: "listening",
+      thinking: "thinking",
+      speaking: "speaking",
+    };
+    const v = map[state];
+    if (v) {
+      const s = useRyu.getState();
+      if (s.voice !== "muted") s.set({ voice: v });
+      this.markActivity();
+    }
+  }
+
+  private onTrack(track: RemoteTrack) {
+    if (track.kind !== Track.Kind.Audio) return;
+    if (Platform.OS === "web") {
+      const el = track.attach();
+      el.style.display = "none";
+      document.body.appendChild(el);
+      this.cleanups.push(() => track.detach().forEach((e) => e.remove()));
+      const a = createAudioAnalyser(track as RemoteAudioTrack);
+      levels.readers.output = () => Math.min(1, a.calculateVolume() * 2.2);
+      this.cleanups.push(() => void a.cleanup());
+    }
+  }
+
+  private teardownLevels() {
+    this.cleanups.splice(0).forEach((f) => f());
+    levels.readers.input = null;
+    levels.readers.output = null;
+    levels.input = levels.output = 0;
+  }
+
+  /** Resolves once Ryu has finished its current sentence (or after `max`). */
+  async waitUntilQuiet(max = 4500) {
+    const t0 = Date.now();
+    await new Promise((r) => setTimeout(r, 400));
+    while (Date.now() - t0 < max) {
+      const v = useRyu.getState().voice;
+      if (v !== "speaking" && v !== "thinking") break;
+      await new Promise((r) => setTimeout(r, 120));
+    }
+  }
+
+  async setMuted(muted: boolean) {
+    if (!this.room) return;
+    await this.room.localParticipant.setMicrophoneEnabled(!muted);
+    useRyu.getState().set({ voice: muted ? "muted" : "listening" });
+  }
+
+  async disconnect() {
+    const r = this.room;
+    this.room = null;
+    this.teardownLevels();
+    if (r) await r.disconnect();
+  }
+}
+
+export const voice = new VoiceLink();

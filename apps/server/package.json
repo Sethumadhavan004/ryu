@@ -1,0 +1,30 @@
+{
+  "name": "@ryu/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --env-file-if-exists=../../.env src/index.ts",
+    "agent": "tsx --env-file-if-exists=../../.env src/agent.ts dev",
+    "doctor": "tsx --env-file-if-exists=../../.env src/doctor.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test src/**/*.test.ts"
+  },
+  "dependencies": {
+    "@ai-sdk/google": "^4.0.82",
+    "@ai-sdk/groq": "^4.0.50",
+    "@hono/node-server": "^2.1.1",
+    "@livekit/agents": "^1.9.1",
+    "@livekit/agents-plugin-google": "^1.9.1",
+    "ai": "^7.0.118",
+    "hono": "^4.13.9",
+    "livekit-server-sdk": "^2.19.1",
+    "zod": "^4.6.5",
+    "@ryu/core": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.3",
+    "tsx": "^4.23.15",
+    "typescript": "~6.0.3"
+  }
+}

@@ -1,31 +1,16 @@
 {
   "name": "ryu",
-  "version": "0.1.0",
   "private": true,
+  "version": "0.1.0",
+  "workspaces": ["apps/*", "packages/*"],
   "scripts": {
-    "dev": "tsx watch server.ts",
-    "build": "next build",
-    "start": "tsx server.ts",
-    "typecheck": "tsc --noEmit",
-    "lint": "eslint"
-  },
-  "dependencies": {
-    "next": "16.3.0",
-    "react": "19.2.8",
-    "react-dom": "19.2.8",
-    "sarvamai": "^1.1.8",
-    "ws": "^8.21.3"
+    "dev": "concurrently -n server,agent,app -c blue,magenta,cyan \"npm:dev -w @ryu/server\" \"npm:agent -w @ryu/server\" \"npm:web -w @ryu/app\"",
+    "dev:demo": "npm run web -w @ryu/app",
+    "doctor": "npm run doctor -w @ryu/server",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
-    "@types/ws": "^8.18.1",
-    "eslint": "^9",
-    "eslint-config-next": "16.3.0",
-    "tailwindcss": "^4",
-    "tsx": "^4.23.12",
-    "typescript": "^5"
+    "concurrently": "^9.2.1"
   }
 }
