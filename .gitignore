@@ -14,6 +14,13 @@ apps/app/ios/
 apps/app/android/
 *.tsbuildinfo
 
+# leftovers from the pre-V1 Next.js app that may still sit in old checkouts
+# (data/ holds that app's local memory store — kept on disk, never committed)
+.next/
+.tts-cache/
+/data/
+next-env.d.ts
+
 # misc
 .DS_Store
 *.log

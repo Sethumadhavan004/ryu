@@ -36,6 +36,7 @@ With **only Google + LiveKit**, everything works. Each optional key upgrades one
 
 **2. LiveKit** (pick one):
 - **Local:** `brew install livekit` (or grab a binary from GitHub releases), then `livekit-server --dev`. The `.env.example` defaults (`devkey` / `secret`) already match. **Use v1.12 or newer**: older servers reject the agent-dispatch tokens.
+- **Windows:** download `livekit_<version>_windows_amd64.zip` from https://github.com/livekit/livekit/releases, unzip, run `.\livekit-server.exe --dev`, and **allow** the Windows Firewall prompt (UDP 7882 carries the audio). Start it *before* `npm run dev`; if the `[agent]` pane errors, fix and rerun.
 - **Docker:** `docker run --rm -p 7880:7880 -p 7881:7881 -p 7882:7882/udp livekit/livekit-server:latest --dev --bind 0.0.0.0`
 - **Cloud:** create a free project and paste its URL/key/secret.
 
@@ -95,27 +96,32 @@ apps/app        Expo SDK 57 app — src/{screens,ui,lib,state}; System design la
 apps/server     src/app.ts (API) · src/pipeline/ (prompts, schemas, run) · src/agent.ts (voice) · src/doctor.ts
 packages/core   shared types, note rendering, demo fixture
 docs/research   the why · docs/design the look
+video           Remotion feature video, cut from deterministic captures of demo mode (see video/README.md)
 ```
 
 Commands: `npm run dev` · `npm run dev:demo` · `npm run doctor` · `npm run typecheck` · `npm test`
 
 ## What's verified, and what isn't yet
 
-This V1 was built and tested in a sandbox with **no API keys**. Honest status:
+This V1 was built and tested in a sandbox with **no API keys**, then re-verified locally (Windows, Node 24) on 2026-09-28. Honest status:
 
 | Area | Status |
 |---|---|
 | Typecheck (all 3 packages, web + native files) | ✅ passes |
-| Unit/integration tests (pipeline guarantees, voice-target parsing) | ✅ pass |
+| Unit/integration tests (pipeline guarantees, voice-target parsing, CORS, local meeting day) | ✅ 8 pass |
+| Dependencies vs registry, `expo-doctor` | ✅ all at `latest` (Expo 57 = latest stable); doctor 21/21 |
+| Model IDs vs providers' live docs (`gemini-3.8-live`, `gemini-flash-latest`, Groq `whisper-large-v3-turbo`) | ✅ exist as of 2026-09-28 |
 | Web bundle + full demo flow in Chromium (desktop + phone widths) | ✅ no console errors |
 | Real stack in Chromium: token → LiveKit 1.12 room → agent dispatch → agent→app RPC → recording with fake mic → chunk upload → `/api/process` → graceful failure + retry | ✅ verified; Google rejected the placeholder key, as expected |
-| Gemini Live conversation, real transcription, real note quality | ⏳ needs your key: first thing to check in the morning |
+| Gemini Live conversation, real transcription, real note quality | ⏳ needs your key: **nothing real has run yet** |
 | iOS / Android builds | ⏳ written + typechecked, **not yet built**. Needs a dev build (`npx expo run:ios` / `run:android`), not Expo Go |
 
 ## V1 scope and known gaps
 
 - **Speakers:** diarization, then names from context. When you name the others at start, the leftover voice is taken to be you. Tap-to-rename covers the rest. Voiceprints, and stereo mic/tab separation, are designed ([Research 03 §4](docs/research/03-brain-and-data.md)) but not in V1.
 - **Storage:** whole-meeting documents on the device. The normalized schema, search and sync come later.
-- **Long meetings without AssemblyAI:** Gemini inline audio caps at ~19 MB (≈1 h at 32 kbps). Add `ASSEMBLYAI_API_KEY` for longer ones.
+- **Long meetings without AssemblyAI:** Gemini caps an inline request at 20 MB *including* base64 encoding, so the raw ceiling is ~14.5 MB (≈1 h at the 32 kbps both web and native now record at). Gemini's speaker labels are also only reliable up to ~30 min per request. For longer meetings, or 3+ speakers, add `ASSEMBLYAI_API_KEY`.
+- **A recording lives in memory until you press Stop (web).** Closing or reloading the tab mid-meeting loses it, and the browser now asks before leaving. Incremental persistence of recorder chunks is the proper fix and is not built yet.
+- **The server only answers browser pages from this machine or your LAN** (it spends your keys). Set `RYU_CORS_ORIGIN` (comma-separated, or `*`) to change that. Native apps are unaffected.
 - **Web storage:** the app asks the browser for persistent storage. Safari may still evict it after 7 days without a visit.
 - **Phone:** create `apps/app/.env` with `EXPO_PUBLIC_RYU_SERVER_URL=http://<your-LAN-IP>:8787` (Expo reads env from the app folder).

@@ -8,6 +8,7 @@ Voice-first meeting intelligence. npm-workspaces monorepo:
 | `apps/server` | Stateless Hono API (`src/app.ts`), the n+1 notes pipeline (`src/pipeline/`), and the LiveKit voice agent (`src/agent.ts`). |
 | `packages/core` | Shared types, render helpers, demo fixture. The data contract between app and server. |
 | `docs/research` | Research 01–04: the reasoning behind every choice here. Read before changing architecture. |
+| `video` | Remotion feature video (not a workspace). Footage is captured deterministically from demo mode; see `video/README.md`. |
 
 Principles that code must keep (see docs/research):
 - The server stores nothing (Research 03 §1). Notes live on the device (`apps/app/src/lib/vault*.ts`).
