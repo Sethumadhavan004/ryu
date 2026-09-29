@@ -116,7 +116,8 @@ export default defineAgent({
         temperature: 0.6,
         // Research 04 §A5: effectively unlimited sessions via sliding window.
         contextWindowCompression: { slidingWindow: {} },
-        thinkingConfig: { includeThoughts: false },
+        // No thinkingConfig: the gemini-3.8-live model page says "omit
+        // thinking_level (or thinking_config) from your session setup" (checked 2026-09-28).
       }),
     });
 
