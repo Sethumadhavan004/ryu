@@ -1,0 +1,7 @@
+node_modules/
+out/
+# Large and reproducible:
+#   footage → node capture/capture.mjs (see README)
+#   audio   → python audio/make_audio.py
+public/footage/
+public/audio/

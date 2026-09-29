@@ -1,0 +1,26 @@
+{
+  "name": "ryu-video",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Remotion feature video for Ryu, cut from deterministic captures of the app's demo mode.",
+  "scripts": {
+    "studio": "remotion studio",
+    "render": "remotion render RyuFeature out/ryu-feature.mp4",
+    "still": "remotion still RyuFeature out/still.png",
+    "review": "node review.mjs",
+    "audio": "python audio/make_audio.py"
+  },
+  "dependencies": {
+    "@remotion/cli": "^4.0.529",
+    "@remotion/google-fonts": "^4.0.529",
+    "@remotion/studio": "^4.0.529",
+    "@remotion/transitions": "^4.0.529",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
+    "remotion": "^4.0.529"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.2",
+    "typescript": "~6.0.3"
+  }
+}
