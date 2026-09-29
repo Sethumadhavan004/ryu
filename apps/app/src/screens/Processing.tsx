@@ -6,6 +6,8 @@ import { C, F, textGlow } from "../theme";
 import { Core } from "../ui/Core";
 import { easeOut, FADE_UP, ms, PULSE } from "../ui/motion";
 import { SystemWindow } from "../ui/SystemWindow";
+import { SystemButton } from "../ui/SystemButton";
+import { cancelProcessing } from "../lib/controller";
 
 const SHIMMER = { from: { transform: [{ translateX: "-100%" as const }] }, to: { transform: [{ translateX: "250%" as const }] } };
 const GLYPH: Record<StepStatus, string> = { pending: "◇", active: "◈", done: "◆", error: "✕", skip: "◇" };
@@ -65,6 +67,8 @@ export function Processing({ compact }: { compact: boolean }) {
           );
         })}
       </View>
+      {/* Aborting flows into "failed" → Notes with Retry, so nothing is lost. */}
+      <SystemButton testID="cancel-processing" label="Cancel" onPress={cancelProcessing} hint="Stop analysis · retry later" />
     </View>
   );
 }

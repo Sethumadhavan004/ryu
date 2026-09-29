@@ -1,7 +1,7 @@
 import { Platform, StyleSheet, Text, View } from "react-native";
 import Animated from "react-native-reanimated";
 import { useEffect } from "react";
-import { enter } from "../lib/controller";
+import { boot as rebootSystem, enter } from "../lib/controller";
 import { demoBoot, demoEnter } from "../lib/demo";
 import { useRyu, type StepStatus } from "../state/store";
 import { C, F, textGlow } from "../theme";
@@ -74,7 +74,10 @@ export function Boot({ compact }: { compact: boolean }) {
         {settled && serverUp === false && !demo ? (
           <Animated.View style={{ alignItems: "center", gap: 12, animationName: FADE_UP, animationDuration: ms(500), animationFillMode: "both" }}>
             <Text style={styles.warn}>The Ryu server isn't reachable. Start it with `npm run dev`, or explore the full flow in demo mode.</Text>
-            <SystemButton testID="demo" label="Run demo" size="lg" onPress={runDemo} hint="Scripted meeting · no keys needed" />
+            <View style={{ flexDirection: "row", gap: 12 }}>
+              <SystemButton testID="retry" label="Retry" size="lg" onPress={() => void rebootSystem()} hint="Re-check the server" />
+              <SystemButton testID="demo" label="Run demo" size="lg" onPress={runDemo} hint="Scripted meeting · no keys needed" />
+            </View>
           </Animated.View>
         ) : null}
       </View>

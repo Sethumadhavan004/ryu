@@ -16,6 +16,14 @@ test("voice targets resolve to the right note", () => {
   assert.equal(resolveNoteTarget(m, "Bob"), null);
 });
 
+test("a name containing a summary keyword opens that person, not the summary", () => {
+  // Regression: /main|core/ used to match inside "Mainak" / "Romain".
+  const withMainak = { ...m, speakers: m.speakers.map((s) => (s.id === "S3" ? { ...s, name: "Mainak" } : s)) };
+  assert.equal(resolveNoteTarget(withMainak, "Mainak"), "S3");
+  assert.equal(resolveNoteTarget(withMainak, "open mainak's notes"), "S3");
+  assert.equal(resolveNoteTarget(withMainak, "the main summary"), "meeting");
+});
+
 test("atoms render with names, owners and timing", () => {
   const idx = atomIndex(m);
   assert.equal(atomText(idx.get("C3")!, m.speakers), "Priya → Send the updated metrics deck (tomorrow morning)");

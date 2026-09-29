@@ -35,9 +35,7 @@ export interface PipelineInput {
 
 export async function* runPipeline(input: PipelineInput): AsyncGenerator<ProcessEvent> {
   const { meta, brain } = input;
-  const date = new Date(meta.startedAt);
-  const dateIso = date.toISOString().slice(0, 10);
-  const weekday = date.toLocaleDateString("en-US", { weekday: "long" });
+  const { dateIso, weekday } = meetingDay(meta.startedAt, meta.tzOffsetMin);
 
   // ── TRANSCRIBE + S0 PREPARE ──────────────────────────────────────────────
   yield { type: "stage", stage: "transcribe", status: "start" };
@@ -137,7 +135,7 @@ export async function* runPipeline(input: PipelineInput): AsyncGenerator<Process
 
   // ── S4 PERSON NOTES (parallel; emitted as each finishes) ─────────────────
   const jobs = speakers.map((s) => () => personNote(s, { ...input, dateIso, ledger, ledgerText, note, speakers, utterances }));
-  for await (const pn of parallel(jobs, 4)) yield { type: "personNote", note: pn };
+  for await (const pn of parallel(jobs, 2)) yield { type: "personNote", note: pn };
   yield { type: "stage", stage: "notes", status: "done", detail: `1 + ${speakers.length} notes` };
 
   // ── S5 VOICE BRIEF ───────────────────────────────────────────────────────
@@ -169,6 +167,18 @@ export async function* runPipeline(input: PipelineInput): AsyncGenerator<Process
   yield { type: "brief", text: brief };
   yield { type: "stage", stage: "brief", status: "done" };
   yield { type: "done", llm: brain.label };
+}
+
+/**
+ * The meeting's calendar day as the *user* saw it. Shifting by the device's
+ * offset and then reading UTC fields avoids depending on the server's zone.
+ */
+export function meetingDay(startedAt: string, tzOffsetMin = 0): { dateIso: string; weekday: string } {
+  const local = new Date(new Date(startedAt).getTime() - tzOffsetMin * 60_000);
+  return {
+    dateIso: local.toISOString().slice(0, 10),
+    weekday: local.toLocaleDateString("en-US", { weekday: "long", timeZone: "UTC" }),
+  };
 }
 
 // ── S0 ───────────────────────────────────────────────────────────────────────
@@ -228,13 +238,15 @@ function applySpeakerNames(
   // "Leftover is me": the user named the others when starting the meeting.
   // If every hinted participant was matched and exactly one voice is left,
   // that voice is almost certainly the user (Research 03 §4c, rung 3).
-  const unnamed = speakers.filter((s) => !s.name);
-  const matchedHints = hint.filter((h) =>
-    speakers.some((s) => s.name && s.name.toLowerCase().includes(h.toLowerCase().split(/\s+/)[0])),
-  );
-  if (hint.length > 0 && matchedHints.length === hint.length && unnamed.length === 1) {
-    unnamed[0].isMe = true;
-    unnamed[0].method = "context";
+  // "Left over" means not matching any hint — the user is often named in the
+  // room ("thanks, Nikhil"), so being unnamed is too strict a test.
+  const hints = hint.map((h) => h.trim().toLowerCase().split(/\s+/)[0]).filter(Boolean);
+  const matches = (s: Speaker) => !!s.name && hints.some((h) => s.name!.toLowerCase().includes(h));
+  const leftover = speakers.filter((s) => !matches(s));
+  const allHintsMatched = hints.every((h) => speakers.some((s) => s.name?.toLowerCase().includes(h)));
+  if (hints.length > 0 && allHintsMatched && leftover.length === 1) {
+    leftover[0].isMe = true;
+    leftover[0].method = "context";
   } else if (speakers.length === 1) {
     speakers[0].isMe = true; // a solo recording is the user's own
   }

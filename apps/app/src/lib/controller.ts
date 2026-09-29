@@ -8,7 +8,7 @@ import {
   speakerName,
 } from "@ryu/core";
 import { Platform } from "react-native";
-import { IDLE_SLEEP_MS, LIVE_CHUNK_SEC, LIVE_LEDGER_EVERY_MS } from "../config";
+import { IDLE_SLEEP_MS, LIVE_CHUNK_SEC, LIVE_LEDGER_EVERY_MS, SERVER_URL } from "../config";
 import { STAGES, currentMeeting, useRyu } from "../state/store";
 import { api } from "./api";
 import { createCapture } from "./capture";
@@ -21,11 +21,15 @@ const S = () => useRyu.getState();
 const newId = () => `m-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
 
 let capture: Capture | null = null;
+/** Settles once the recorder has started (or failed). Stop waits on it. */
+let captureStarting: Promise<void> | null = null;
 let chunkQueue: Promise<void> = Promise.resolve();
 let lastLedgerAt = 0;
 let ledgerBusy = false;
 let idleTimer: ReturnType<typeof setInterval> | null = null;
 let processAbort: AbortController | null = null;
+let draftErrNotified = false;
+const PROCESS_TIMEOUT_MS = 10 * 60_000;
 
 // ── Boot ────────────────────────────────────────────────────────────────────
 
@@ -43,7 +47,9 @@ export async function boot() {
         await vault.save(m);
       }
     }
-    s.set({ meetings });
+    // Newest first, like upsertMeeting. IndexedDB returns key order (oldest
+    // first), which made "latest meeting" voice commands read an old meeting.
+    s.set({ meetings: meetings.sort((a, b) => b.startedAt.localeCompare(a.startedAt)) });
     s.setBoot("store", "done", `${meetings.length} records · ${persistent ? "persistent" : "best-effort storage"}`);
   } catch (e) {
     s.setBoot("store", "error", errMsg(e));
@@ -58,7 +64,7 @@ export async function boot() {
     s.setBoot("voice", h.providers.voice ? "done" : "skip", h.providers.voice ?? "LiveKit not configured — touch controls only");
   } catch {
     s.set({ serverUp: false, providers: null });
-    s.setBoot("server", "error", "unreachable — run `npm run dev`");
+    s.setBoot("server", "error", `unreachable at ${SERVER_URL} — run \`npm run dev\`, then Retry`);
     s.setBoot("brain", "skip");
     s.setBoot("voice", "skip");
   }
@@ -115,21 +121,23 @@ function startIdleWatch() {
 export async function startMeeting(title = "Meeting", participants: string[] = []): Promise<string> {
   const s = S();
   if (s.phase === "meeting") return "A meeting is already recording.";
+  if (s.phase === "processing") return "Still analysing the last meeting.";
+  draftErrNotified = false;
   s.set({
     phase: "meeting",
     focus: null,
     live: { title, participants, startedAt: Date.now(), draft: [], atoms: [], tabAudio: false, draftEngine: null },
   });
   sound.play("rec");
+  guardUnload(true);
   s.notify({ title: "Meeting mode", body: participants.length ? `Recording with ${participants.join(", ")}.` : "Recording. Ryu is not listening.", tone: "shadow" });
 
   // Let Ryu finish its confirmation, then really close the voice session:
   // "not listening" must be literally true (Research 04 §A5).
-  void (async () => {
-    if (voice.connected) {
-      await voice.waitUntilQuiet();
-      await voice.disconnect();
-    }
+  captureStarting = (async () => {
+    if (voice.connected) await voice.waitUntilQuiet();
+    // Unconditional: also cancels a connect still in flight.
+    await voice.disconnect();
     S().set({ voice: "off", captions: [] });
     try {
       capture = createCapture();
@@ -138,6 +146,7 @@ export async function startMeeting(title = "Meeting", participants: string[] = [
       S().setBoot("mic", "done");
     } catch (e) {
       capture = null;
+      guardUnload(false);
       sound.play("error");
       S().notify({ title: "Microphone unavailable", body: errMsg(e), tone: "danger" });
       S().set({ phase: "home", live: null });
@@ -165,6 +174,11 @@ function onLiveChunk(wav: Uint8Array, startSec: number) {
       if (Date.now() - lastLedgerAt > LIVE_LEDGER_EVERY_MS) void refreshLiveLedger();
     } catch (e) {
       console.warn("[live draft]", e);
+      // Otherwise a bad STT key looks exactly like a silent room.
+      if (!draftErrNotified) {
+        draftErrNotified = true;
+        S().notify({ title: "Live draft unavailable", body: `${errMsg(e)} — the recording continues.`, tone: "danger" });
+      }
     }
   });
 }
@@ -191,11 +205,15 @@ async function refreshLiveLedger() {
 
 export async function stopMeeting() {
   const s = S();
-  const live = s.live;
+  // Stop can be pressed while Ryu is still finishing its confirmation, before
+  // the recorder exists. Wait for it instead of silently ignoring the tap.
+  if (s.live && !capture && captureStarting) await captureStarting;
+  const live = S().live;
   if (!live || !capture) return;
   sound.play("stop");
   const c = capture;
   capture = null;
+  guardUnload(false);
   let result;
   try {
     result = await c.stop();
@@ -221,9 +239,14 @@ export async function stopMeeting() {
     voiceBrief: null,
   };
   s.upsertMeeting(m);
-  await vault.save(m);
-  await vault.saveAudio(m.id, result.audio);
   s.set({ currentId: m.id, live: null });
+  try {
+    await vault.save(m);
+    await vault.saveAudio(m.id, result.audio);
+  } catch (e) {
+    // Still process from memory: a full disk must not also cost the notes.
+    s.notify({ title: "Couldn't save the recording", body: `${errMsg(e)} — notes will still be made, but retry won't be possible.`, tone: "danger" });
+  }
   await processMeeting(m.id, result.body, result.type);
 }
 
@@ -251,23 +274,27 @@ export async function processMeeting(id: string, body?: Blob | Uint8Array, type?
   s.upsertMeeting(m);
   s.set({ phase: "processing", currentId: id, stages: STAGES.map((x) => ({ ...x })), focus: null });
   processAbort = new AbortController();
+  // A stalled stream would otherwise leave a spinner forever.
+  const ac = processAbort;
+  const watchdog = setTimeout(() => ac.abort(new Error("Analysis timed out after 10 minutes.")), PROCESS_TIMEOUT_MS);
 
   let failed: string | null = null;
   try {
-    for await (const e of api.process(body, type, { title: m.title, startedAt: m.startedAt, participantsHint: m.participantsHint }, processAbort.signal)) {
+    for await (const e of api.process(body, type, { title: m.title, startedAt: m.startedAt, participantsHint: m.participantsHint, tzOffsetMin: new Date(m.startedAt).getTimezoneOffset() }, processAbort.signal)) {
       applyEvent(id, e);
       if (e.type === "error") failed = e.message;
     }
   } catch (e) {
-    failed = errMsg(e);
+    failed = ac.signal.aborted ? errMsg(ac.signal.reason ?? "Analysis cancelled.") : errMsg(e);
   }
+  clearTimeout(watchdog);
   processAbort = null;
 
   const final = S().meetings.find((x) => x.id === id)!;
   if (failed || !final.note) {
     const done: Meeting = { ...final, status: "failed", error: failed ?? "The pipeline ended without a note." };
     S().upsertMeeting(done);
-    await vault.save(done);
+    await saveQuietly(done);
     sound.play("error");
     S().notify({ title: "Analysis failed", body: done.error!, tone: "danger" });
     S().set({ phase: "notes" });
@@ -275,7 +302,7 @@ export async function processMeeting(id: string, body?: Blob | Uint8Array, type?
   }
   const ready: Meeting = { ...final, status: "ready" };
   S().upsertMeeting(ready);
-  await vault.save(ready);
+  await saveQuietly(ready);
   sound.play("done");
   S().notify({ title: "Notes acquired", body: `1 + ${ready.personNotes.length} notes · ${ready.note!.actions.length} action items`, tone: "gold" });
   await new Promise((r) => setTimeout(r, 900));
@@ -311,6 +338,15 @@ function applyEvent(id: string, e: ProcessEvent) {
     case "error":
       if (e.stage) s.setStage(e.stage, "error", e.message);
       break;
+  }
+}
+
+/** A vault failure after processing must not strand the UI on the Processing screen. */
+async function saveQuietly(m: Meeting) {
+  try {
+    await vault.save(m);
+  } catch (e) {
+    S().notify({ title: "Couldn't save notes", body: `${errMsg(e)} — they're shown now but won't survive a reload.`, tone: "danger" });
   }
 }
 
@@ -429,3 +465,14 @@ export function errMsg(e: unknown): string {
 }
 const fmt = (t: number) => `${String(Math.floor(t / 60)).padStart(2, "0")}:${String(Math.floor(t % 60)).padStart(2, "0")}`;
 export const isWebPlatform = Platform.OS === "web";
+
+/**
+ * Web keeps the recording in memory until Stop, so closing or reloading the
+ * tab mid-meeting would lose it. Ask the browser to confirm first.
+ */
+const onBeforeUnload = (e: Event) => e.preventDefault();
+function guardUnload(on: boolean) {
+  if (!isWebPlatform || typeof window === "undefined") return;
+  if (on) window.addEventListener("beforeunload", onBeforeUnload);
+  else window.removeEventListener("beforeunload", onBeforeUnload);
+}

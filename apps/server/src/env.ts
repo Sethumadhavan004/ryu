@@ -10,7 +10,8 @@ const get = (k: string) => {
 
 export const env = {
   port: Number(get("RYU_SERVER_PORT") ?? 8787),
-  corsOrigin: get("RYU_CORS_ORIGIN") ?? "*",
+  /** Unset = only local / private-network browser origins (see app.ts). */
+  corsOrigin: get("RYU_CORS_ORIGIN"),
 
   googleKey: get("GOOGLE_API_KEY") ?? get("GOOGLE_GENERATIVE_AI_API_KEY"),
   groqKey: get("GROQ_API_KEY"),
@@ -32,8 +33,10 @@ export const env = {
 // The Google AI SDK provider reads GOOGLE_GENERATIVE_AI_API_KEY; the LiveKit
 // plugin reads GOOGLE_API_KEY. Accept either name and set both.
 if (env.googleKey) {
-  process.env.GOOGLE_GENERATIVE_AI_API_KEY ??= env.googleKey;
-  process.env.GOOGLE_API_KEY ??= env.googleKey;
+  // Assign, don't ??=: the AI SDK reads GOOGLE_GENERATIVE_AI_API_KEY, and a
+  // stale one in the system env must not silently differ from the key we report.
+  process.env.GOOGLE_GENERATIVE_AI_API_KEY = env.googleKey;
+  process.env.GOOGLE_API_KEY = env.googleKey;
 }
 
 export type Capability = "voice" | "liveStt" | "finalStt" | "brain";

@@ -2,7 +2,6 @@ import { DEMO_LIVE_ATOMS, DEMO_SCRIPT, demoMeeting, type ProcessEvent } from "@r
 import { levels } from "../state/levels";
 import { STAGES, useRyu } from "../state/store";
 import { sound } from "./sound";
-import { vault } from "./vault";
 
 /**
  * Demo mode: drives the real UI (same store, same screens) with a scripted
@@ -51,8 +50,8 @@ export async function demoBoot() {
     ["voice", "simulated voice"],
     ["mic", "not used in demo"],
   ];
-  await vault.init().catch(() => {});
-  s.set({ meetings: await vault.list().catch(() => []) });
+  // Demo data stays in memory: it must never land in (or mix with) the real vault.
+  s.set({ meetings: [] });
   for (const [k, d] of steps) {
     s.setBoot(k, "active");
     await wait(260);
@@ -190,7 +189,6 @@ async function demoProcess() {
   }
   const ready = { ...final, draft: shell.draft };
   s.upsertMeeting(ready);
-  await vault.save(ready).catch(() => {});
   sound.play("done");
   s.notify({ title: "Notes acquired", body: "1 + 3 notes · 4 action items", tone: "gold" });
   await wait(900);

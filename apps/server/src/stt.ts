@@ -77,6 +77,10 @@ async function assembly(
   for (let i = 0; i < 600; i++) {
     await new Promise((r) => setTimeout(r, i < 10 ? 1500 : 3000));
     const res = await fetch(`${AAI}/transcript/${id}`, { headers, signal: opts.signal });
+    if (!res.ok) {
+      if (res.status >= 500) continue; // transient; keep polling
+      throw new Error(`AssemblyAI poll failed: ${res.status} ${await res.text()}`);
+    }
     const t = (await res.json()) as {
       status: string;
       error?: string;
@@ -96,9 +100,11 @@ async function assembly(
 }
 
 async function geminiDiarize(audio: Uint8Array, mediaType: string, signal?: AbortSignal): Promise<RawUtterance[]> {
-  // Inline audio is capped at ~20 MB per request; ~1 h of 32 kbps Opus fits.
-  if (audio.byteLength > 19_000_000) {
-    throw new Error("Recording is too large for inline Gemini transcription (>19 MB). Add ASSEMBLYAI_API_KEY for long meetings.");
+  // Gemini caps the whole inline request at 20 MB, and inline audio travels
+  // base64-encoded (+33%), so the raw ceiling is ~14.5 MB ≈ 1 h at 32 kbps.
+  // Diarization is also only reliable up to ~30 min per request (Research 02 §2b).
+  if (audio.byteLength > 14_500_000) {
+    throw new Error("Recording is too large for inline Gemini transcription (>14.5 MB ≈ 1 h). Add ASSEMBLYAI_API_KEY for long meetings.");
   }
   const { output } = await generateText({
     model: google(env.llmModel),

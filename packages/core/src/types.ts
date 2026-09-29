@@ -174,6 +174,12 @@ export interface ProcessMeta {
   title: string;
   startedAt: string;
   participantsHint: string[];
+  /**
+   * Device's `Date#getTimezoneOffset()` when the meeting started. Relative
+   * dates ("by Friday") resolve against the *local* date; UTC is off by a day
+   * for part of every day outside UTC. Optional for older clients.
+   */
+  tzOffsetMin?: number;
   /** Voice brief is written for whoever is `isMe`, if known. */
 }
 

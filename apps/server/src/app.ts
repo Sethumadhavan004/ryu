@@ -16,7 +16,26 @@ import { issueToken, type AgentJobMeta } from "./token";
  */
 export const app = new Hono();
 
-app.use("*", cors({ origin: env.corsOrigin, allowHeaders: ["content-type", "x-ryu-meta"], exposeHeaders: ["x-ryu-engine"] }));
+/**
+ * The server spends the operator's API keys, so an arbitrary website open in
+ * the same browser must not be able to call it. Default: allow only origins on
+ * this machine or the LAN (the phone/web app). Native apps send no Origin and
+ * are unaffected. Override with RYU_CORS_ORIGIN (comma-separated, or "*").
+ */
+const LOCAL_HOST = /^(localhost|127\.\d+\.\d+\.\d+|\[::1\]|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+|[\w-]+\.local)$/;
+export function allowOrigin(origin: string): string | null {
+  if (env.corsOrigin) {
+    if (env.corsOrigin === "*") return origin;
+    return env.corsOrigin.split(",").map((o) => o.trim()).includes(origin) ? origin : null;
+  }
+  try {
+    return LOCAL_HOST.test(new URL(origin).hostname) ? origin : null;
+  } catch {
+    return null;
+  }
+}
+
+app.use("*", cors({ origin: allowOrigin, allowHeaders: ["content-type", "x-ryu-meta"], exposeHeaders: ["x-ryu-engine"] }));
 
 app.onError((err, c) => {
   console.error("[server]", err);
@@ -77,7 +96,7 @@ app.post("/api/process", async (c) => {
     try {
       const expected = meta.participantsHint?.length ? meta.participantsHint.length + 1 : undefined;
       for await (const e of runPipeline({
-        meta: { title: meta.title || "Untitled meeting", startedAt: meta.startedAt || new Date().toISOString(), participantsHint: meta.participantsHint ?? [] },
+        meta: { title: meta.title || "Untitled meeting", startedAt: meta.startedAt || new Date().toISOString(), participantsHint: meta.participantsHint ?? [], tzOffsetMin: Number.isFinite(meta.tzOffsetMin) ? meta.tzOffsetMin : 0 },
         brain,
         transcribe: () => transcribeFinal(audio, mediaType, { speakersExpected: expected, signal: ac.signal }),
         signal: ac.signal,

@@ -57,7 +57,11 @@ export function personTitle(m: Meeting, p: PersonNote): string {
 /** Resolve a spoken target ("summary", "me", "priya", "speaker two") to a note key. */
 export function resolveNoteTarget(m: Meeting, target: string): "meeting" | SpeakerId | null {
   const t = target.trim().toLowerCase();
-  if (!t || /summary|meeting|overall|core|main/.test(t)) return "meeting";
+  if (!t) return "meeting";
+  // A named person wins over summary keywords: "main" must not swallow "Mainak".
+  const named = m.speakers.find((s) => s.name && new RegExp(`\\b${escapeRe(s.name.toLowerCase())}\\b`).test(t));
+  if (named) return named.id;
+  if (/\b(summary|meeting|overall|core|main)\b/.test(t)) return "meeting";
   if (/^(me|my|mine|myself|you|your)\b/.test(t) || t === "my notes") {
     const me = m.speakers.find((s) => s.isMe);
     return me ? me.id : null;
@@ -71,13 +75,13 @@ export function resolveNoteTarget(m: Meeting, target: string): "meeting" | Speak
     );
     if (byLabel) return byLabel.id;
   }
-  const byName = m.speakers.find((s) => s.name && t.includes(s.name.toLowerCase()));
-  if (byName) return byName.id;
   const byFirst = m.speakers.find(
     (s) => s.name && s.name.toLowerCase().split(/\s+/)[0] === t.split(/\s+/)[0],
   );
   return byFirst ? byFirst.id : null;
 }
+
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 function list(items: string[]): string {
   if (items.length === 0) return "";

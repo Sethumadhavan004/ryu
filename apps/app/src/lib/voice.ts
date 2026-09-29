@@ -27,6 +27,7 @@ class VoiceLink {
   private cleanups: (() => void)[] = [];
   private lastActivity = Date.now();
   private closing = false;
+  private gen = 0;
   private agentWatch: ReturnType<typeof setTimeout> | null = null;
 
   get connected() {
@@ -44,9 +45,13 @@ class VoiceLink {
     const st = useRyu.getState();
     if (this.room) await this.disconnect();
     st.set({ voice: "connecting", voiceError: null });
+    // disconnect() bumps gen, so a connect that's still in flight when a
+    // meeting starts gives up instead of finishing into a live room.
+    const gen = ++this.gen;
     await prepareVoicePlatform();
 
     const { url, token } = await api.token(mode, brief);
+    if (gen !== this.gen) return;
     const room = new Room({ adaptiveStream: true, dynacast: true });
     this.room = room;
 
@@ -91,8 +96,17 @@ class VoiceLink {
       useRyu.getState().caption({ id, who, text, final: true });
     });
 
-    await room.connect(url, token);
-    await room.localParticipant.setMicrophoneEnabled(true, { echoCancellation: true, noiseSuppression: true, autoGainControl: true });
+    try {
+      await room.connect(url, token);
+      if (gen !== this.gen) return void (await room.disconnect());
+      await room.localParticipant.setMicrophoneEnabled(true, { echoCancellation: true, noiseSuppression: true, autoGainControl: true });
+      if (gen !== this.gen) return void (await room.disconnect());
+    } catch (e) {
+      // Mic denied etc.: don't leave a live room where the agent talks to nobody.
+      if (this.room === room) await this.disconnect();
+      else await room.disconnect();
+      throw e;
+    }
 
     const mic = room.localParticipant.getTrackPublication(Track.Source.Microphone)?.audioTrack;
     if (mic && Platform.OS === "web") {
@@ -185,6 +199,7 @@ class VoiceLink {
   async disconnect() {
     const r = this.room;
     this.room = null;
+    this.gen++;
     this.closing = true;
     if (this.agentWatch) clearTimeout(this.agentWatch);
     this.agentWatch = null;

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ProcessEvent } from "@ryu/core";
 import { MockLanguageModelV4 } from "ai/test";
-import { runPipeline } from "./run";
+import { meetingDay, runPipeline } from "./run";
 
 /**
  * Drives the full pipeline with a scripted model that deliberately misbehaves,
@@ -140,4 +140,10 @@ test("n+1 pipeline enforces its guarantees", async () => {
 
   assert.ok(events.some((e) => e.type === "brief"));
   assert.equal(events.at(-1)?.type, "done");
+});
+
+test("relative dates resolve against the user's local day, not UTC", () => {
+  // 02:00 Tuesday in India is still Monday in UTC.
+  assert.deepEqual(meetingDay("2026-09-28T20:30:00Z", -330), { dateIso: "2026-09-29", weekday: "Tuesday" });
+  assert.deepEqual(meetingDay("2026-09-28T20:30:00Z"), { dateIso: "2026-09-28", weekday: "Monday" });
 });

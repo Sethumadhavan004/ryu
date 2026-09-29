@@ -36,7 +36,9 @@ export function createCapture(): Capture {
       if (!perm.granted) throw new Error("Microphone permission denied.");
       await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true, shouldPlayInBackground: true });
 
-      recorder = new AudioModule.AudioRecorder({ ...RecordingPresets.HIGH_QUALITY, numberOfChannels: 1, bitRate: 64000, isMeteringEnabled: true });
+      // 32 kbps mono AAC ≈ 14 MB/h, matching web Opus: speech doesn't need
+      // more, and it keeps an hour under Gemini's 20 MB inline request cap.
+      recorder = new AudioModule.AudioRecorder({ ...RecordingPresets.HIGH_QUALITY, numberOfChannels: 1, bitRate: 32000, isMeteringEnabled: true });
       await recorder.prepareToRecordAsync();
       recorder.record();
       t0 = Date.now();
